@@ -10,71 +10,77 @@ const features = [
     title: 'Prescription Scanning',
     body: 'Upload or capture handwritten prescriptions in PDF format',
     icon: iconSearching,
-    iconStyle: { top: 42, left: 51, width: 125, height: 99 },
   },
   {
     title: 'OCR Text Extraction',
-    body: 'OCR technology extracts technology text and identifies key details',
+    body: 'OCR technology extracts text and identifies key details',
     icon: iconOcr,
-    iconStyle: { top: 28, left: 50, width: 127, height: 127 },
   },
   {
     title: 'Structured Information',
     body: 'Converts unstructured text into organized, structured medical information',
     icon: iconStructured,
-    iconStyle: { top: 19, left: 41, width: 145, height: 145 },
   },
   {
     title: 'Review and Save',
     body: 'Review the extracted information, then save the verified prescription',
     icon: iconDownloading,
-    iconStyle: { top: 33, left: 46, width: 135, height: 135 },
   },
   {
     title: 'Download',
     body: 'Download prescription information as PDF documents',
     icon: iconDownload,
-    iconStyle: { top: 26, left: 71, width: 85, height: 127 },
   },
 ]
 
 export default function Features() {
   return (
-    <section id="features" className="relative h-[829px]">
-      <p
-        className="absolute text-center font-poppins text-[24px] font-normal text-teal"
-        style={{ top: 213, left: 362, width: 715 }}
-      >
-        Features
-      </p>
-      <h2
-        className="absolute text-center font-poppins text-[50px] font-bold text-teal text-shadow-[0_4px_4px_rgba(0,0,0,0.25)]"
-        style={{ top: 249, left: 362, width: 715 }}
-      >
-        Our Features &amp; Services
-      </h2>
-      {features.map((feature, index) => (
-        <div
-          key={feature.title}
-          className="absolute rounded-[16px] border-2 border-teal bg-white"
-          style={{ top: 352, left: 45 + index * 280.5, width: 228, height: 388 }}
-        >
-          <img src={cardIconBg} alt="" className="absolute" style={{ top: 49, left: 62, width: 103, height: 103 }} />
-          <img src={feature.icon} alt={feature.title} className="absolute" style={feature.iconStyle} />
-          <h3
-            className="absolute text-center font-poppins text-[24px] font-medium leading-[1.2] text-teal-deep"
-            style={{ top: 172, left: 0, width: 227, height: 73 }}
-          >
-            {feature.title}
-          </h3>
-          <p
-            className="absolute text-center font-poppins text-[15px] font-normal leading-normal text-teal-deep"
-            style={{ top: 266, left: 0, width: 227, height: 122 }}
-          >
-            {feature.body}
-          </p>
+    <section id="features" className="relative w-full py-16 lg:py-24">
+      {/* Title */}
+      <div className="mx-auto max-w-[1360px] px-6 text-center mb-12 lg:mb-16">
+        <p className="font-poppins text-lg sm:text-xl font-normal text-teal mb-1">
+          Features
+        </p>
+        <h2 className="font-poppins text-3xl sm:text-4xl lg:text-[44px] font-bold text-teal tracking-tight">
+          Our Features &amp; Services
+        </h2>
+      </div>
+
+      {/* 5 Feature Cards */}
+      <div className="mx-auto max-w-[1360px] px-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-6">
+          {features.map((feature) => (
+            <div
+              key={feature.title}
+              className="flex min-h-[380px] flex-col items-center rounded-[20px] border-2 border-teal bg-white p-6 text-center shadow-sm transition-all duration-200 hover:-translate-y-1 hover:shadow-md"
+            >
+              {/* Icon Container with Circular Teal BG */}
+              <div className="relative mb-5 flex h-24 w-24 items-center justify-center shrink-0">
+                <img
+                  src={cardIconBg}
+                  alt=""
+                  className="absolute inset-0 h-full w-full object-contain"
+                />
+                <img
+                  src={feature.icon}
+                  alt={feature.title}
+                  className="relative z-10 max-h-14 max-w-14 object-contain"
+                />
+              </div>
+
+              {/* Title */}
+              <h3 className="font-poppins text-lg lg:text-[20px] font-semibold leading-snug text-teal-deep min-h-[50px] flex items-center justify-center mb-2">
+                {feature.title}
+              </h3>
+
+              {/* Body */}
+              <p className="font-poppins text-sm text-teal-deep/85 leading-relaxed">
+                {feature.body}
+              </p>
+            </div>
+          ))}
         </div>
-      ))}
+      </div>
     </section>
   )
 }

@@ -8,7 +8,7 @@ import Footer from '../components/landing/Footer.jsx'
 
 export default function LandingPage() {
   return (
-    <div className="relative mx-auto w-[1440px] overflow-hidden bg-white">
+    <div className="relative min-h-screen w-full overflow-x-hidden bg-white">
       <Navbar />
       <Hero />
       <About />
