@@ -9,10 +9,15 @@ import { supabase, isLiveSupabaseConfigured } from './api.js'
 export const DEMO_USERS = {
   patient: {
     id: 'usr_pat_001',
-    email: 'patient@mediseena.ph',
+    email: 'juan.delacruz@gmail.com',
     full_name: 'Juan Dela Cruz',
     role: 'patient',
-    phone_number: '+63 917 123 4567',
+    phone_number: '+63 9123456789',
+    date_of_birth: '2001-05-16',
+    address: 'Metro Manila, Philippines',
+    allergies: 'None',
+    blood_type: 'AB',
+    conditions: 'None',
     avatar_url: null,
   },
   pharmacist: {
@@ -224,6 +229,48 @@ export const authService = {
     const targetUser = DEMO_USERS[roleKey] || DEMO_USERS.patient
     localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(targetUser))
     return targetUser
+  },
+
+  /**
+   * Persist profile edits (demo session + live profiles when configured)
+   */
+  async updateProfile(updates) {
+    const storedLocal = localStorage.getItem(SESSION_STORAGE_KEY)
+    const storedSession = sessionStorage.getItem(SESSION_STORAGE_KEY)
+    let current = {}
+    try {
+      current = JSON.parse(storedLocal || storedSession || '{}')
+    } catch (_) {}
+
+    if (!current?.id) {
+      const session = await this.getSession()
+      current = session?.user || {}
+    }
+
+    const updated = { ...current, ...updates }
+
+    if (isLiveSupabaseConfigured && updated.id && !String(updated.id).startsWith('usr_')) {
+      try {
+        await supabase
+          .from('profiles')
+          .update({
+            full_name: updated.full_name,
+            phone_number: updated.phone_number || null,
+            avatar_url: updated.avatar_url || null,
+          })
+          .eq('id', updated.id)
+      } catch (err) {
+        console.warn('Live profile update failed; keeping local copy:', err)
+      }
+    }
+
+    if (storedSession && !storedLocal) {
+      sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(updated))
+    } else {
+      localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(updated))
+    }
+
+    return updated
   },
 
   /**

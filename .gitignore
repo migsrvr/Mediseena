@@ -80,4 +80,5 @@ Desktop.ini
 *.ntvs*
 *.njsproj
 *.sln
-*.sw?
+*.sw?.cursor/
+mcp.json

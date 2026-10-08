@@ -61,6 +61,13 @@ export function AuthProvider({ children }) {
     return switchedUser
   }
 
+  const handleUpdateProfile = async (updates) => {
+    const updated = await authService.updateProfile(updates)
+    setUser(updated)
+    if (updated?.role) setRole(updated.role)
+    return updated
+  }
+
   const handleLogout = async () => {
     await authService.logout()
     setUser(null)
@@ -78,6 +85,7 @@ export function AuthProvider({ children }) {
     login: handleLogin,
     register: handleRegister,
     switchRole: handleRoleSwitch,
+    updateProfile: handleUpdateProfile,
     logout: handleLogout,
   }
 

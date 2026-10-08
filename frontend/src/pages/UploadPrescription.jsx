@@ -19,12 +19,10 @@ import rxIllustration from '../assets/upload/rx_illustration.png'
 import OcrProcessingView from '../components/upload/OcrProcessingView.jsx'
 import { validatePrescriptionFile } from '../utils/validators.js'
 import { processPrescriptionPipeline } from '../services/ocrService.js'
-import { useAuth } from '../context/AuthContext.jsx'
 
 const NAV_ITEMS = [
   { label: 'Upload', href: '/upload', icon: Upload, active: true },
   { label: 'My Prescriptions', href: '/dashboard', icon: FileText, active: false },
-  // TODO: wire to PROFILE PAGE design (671:7997) once /profile route exists
   { label: 'Profile', href: '/profile', icon: CircleUserRound, active: false },
   { label: 'Settings', href: '/settings', icon: Settings, active: false },
 ]
@@ -44,7 +42,6 @@ function Wordmark({ compact = false }) {
 }
 
 export default function UploadPrescription() {
-  const { logout } = useAuth()
   const fileInputRef = useRef(null)
   const [imagePreviewUrl, setImagePreviewUrl] = useState(null)
   const [fileName, setFileName] = useState('')
@@ -145,14 +142,13 @@ export default function UploadPrescription() {
           <img src={logo} alt="Mediseena" className="h-10 w-auto object-contain" />
           <Wordmark compact />
         </div>
-        <button
-          type="button"
-          onClick={logout}
+        <a
+          href="/logout"
           aria-label="Logout"
           className="rounded-xl p-2 text-teal-deep hover:bg-teal-light"
         >
           <LogOut className="h-5 w-5" />
-        </button>
+        </a>
       </div>
 
       <div className="mx-auto flex max-w-[1600px] gap-6 px-4 pb-12 sm:px-6 lg:px-8">
@@ -181,14 +177,13 @@ export default function UploadPrescription() {
                 </a>
               )
             })}
-            <button
-              type="button"
-              onClick={logout}
+            <a
+              href="/logout"
               className="flex items-center gap-4 rounded-[12px] px-6 py-4 text-left text-[22px] font-extralight text-teal-deep transition hover:bg-teal-light/60"
             >
               <LogOut className="h-7 w-7 shrink-0" strokeWidth={1.75} />
               <span>Logout</span>
-            </button>
+            </a>
           </nav>
         </aside>
 
