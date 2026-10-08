@@ -9,6 +9,7 @@ import Login from './pages/Login.jsx'
 import Register from './pages/Register.jsx'
 import Dashboard from './pages/Dashboard.jsx'
 import Profile from './pages/Profile.jsx'
+import Settings from './pages/Settings.jsx'
 import UploadPrescription from './pages/UploadPrescription.jsx'
 import ReviewExtraction from './pages/ReviewExtraction.jsx'
 import Records from './pages/Records.jsx'
@@ -58,6 +59,7 @@ function MainRoutes() {
   // Authenticated workspace routes
   if (path === '/dashboard') return <Dashboard />
   if (path === '/profile') return <Profile />
+  if (path === '/settings') return <Settings />
   if (path === '/upload') return <UploadPrescription />
   if (path === '/review') return <ReviewExtraction />
   if (path === '/records') return <Records />
