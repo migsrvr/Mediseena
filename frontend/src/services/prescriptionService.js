@@ -9,432 +9,343 @@ const LOCAL_PRESCRIPTIONS_KEY = 'mediseena_prescriptions_data'
 const LOCAL_CORRECTIONS_KEY = 'mediseena_corrections_log'
 const LOCAL_AUDIT_KEY = 'mediseena_audit_trail'
 
-// Sample pre-seeded prescription data for immediate demonstration & evaluation
-const SEED_PRESCRIPTIONS = [
-  {
-    id: 'rx_seed_001',
-    user_id: 'usr_pat_001',
-    patient_name: 'Juan Dela Cruz',
-    patient_age: 42,
-    patient_gender: 'Male',
-    patient_address: 'Sampaloc, Manila',
-    physician_name: 'Dr. Roberto Mendoza, MD',
-    physician_license: 'PRC-0098412',
-    clinic_hospital: 'Manila Doctors Medical Center',
-    date_issued: '2026-09-18',
-    source_image_url: 'https://images.unsplash.com/photo-1584515979956-d9f6e5d09982?auto=format&fit=crop&q=80&w=800',
-    raw_ocr_text: 'MANILA DOCTORS MEDICAL CENTER\nDr. Roberto Mendoza, MD\nLic No: PRC-0098412\nPatient: Juan Dela Cruz Age: 42 Sex: M Date: 2026-09-18\nRx\nAmoxicillin 500mg capsules #21\nSig: 1 cap every 8 hours for 7 days after meals\nParacetamol 500mg tablets #10\nSig: 1 tab every 4-6 hours PRN for fever',
-    ocr_confidence: 89.4,
-    ai_confidence: 93.0,
-    processing_time_ms: 3820,
-    verification_status: 'verified',
-    verified_by: 'Stephane Aira Cayetano, RPh',
-    verified_at: '2026-09-18T10:15:00.000Z',
-    notes: 'Prescribed for acute pharyngitis. Patient advised to complete 7-day antibiotic course.',
-    created_at: '2026-09-18T09:45:00.000Z',
-    medications: [
-      {
-        id: 'med_001_1',
-        medication_name: 'Amoxicillin',
-        generic_name: 'Amoxicillin Trihydrate',
-        dosage: '500 mg',
-        frequency: 'Every 8 hours (3x daily)',
-        duration: '7 days',
-        route: 'Oral',
-        instructions: 'Take 1 capsule every 8 hours after meals until finished.',
-        confidence_score: 95.0,
-        is_verified: true,
-      },
-      {
-        id: 'med_001_2',
-        medication_name: 'Paracetamol',
-        generic_name: 'Acetaminophen',
-        dosage: '500 mg',
-        frequency: 'Every 4-6 hours as needed',
-        duration: '3-5 days',
-        route: 'Oral',
-        instructions: 'Take 1 tablet PRN for temperature > 37.8°C or body aches.',
-        confidence_score: 91.5,
-        is_verified: true,
-      }
-    ]
-  },
-  {
-    id: 'rx_seed_002',
-    user_id: 'usr_pat_001',
-    patient_name: 'Maria Clara Santos',
-    patient_age: 58,
-    patient_gender: 'Female',
-    patient_address: 'Quezon City, Metro Manila',
-    physician_name: 'Dr. Evelyn Tan, MD, FPCP',
-    physician_license: 'PRC-0076543',
-    clinic_hospital: 'St. Luke\'s Medical Center',
-    date_issued: '2026-09-24',
-    source_image_url: 'https://images.unsplash.com/photo-1587854692152-cbe660dbde88?auto=format&fit=crop&q=80&w=800',
-    raw_ocr_text: 'ST. LUKE\'S MEDICAL CENTER\nDr. Evelyn Tan, MD, FPCP\nPatient: Maria Clara Santos Age: 58 Sex: F Date: 2026-09-24\nRx\nAmlodipine Besylate 10mg tab #30\nSig: 1 tab OD at bedtime\nMetformin HCl 500mg tab #60\nSig: 1 tab BID with meals',
-    ocr_confidence: 86.2,
-    ai_confidence: 91.0,
-    processing_time_ms: 4150,
-    verification_status: 'pending',
-    verified_by: null,
-    verified_at: null,
-    notes: 'Hypertension and Type 2 Diabetes maintenance checkup. Recheck BP in 2 weeks.',
-    created_at: '2026-09-24T14:20:00.000Z',
-    medications: [
-      {
-        id: 'med_002_1',
-        medication_name: 'Amlodipine Besylate',
-        generic_name: 'Amlodipine',
-        dosage: '10 mg',
-        frequency: 'Once daily (OD)',
-        duration: '30 days',
-        route: 'Oral',
-        instructions: 'Take 1 tablet daily at bedtime. Monitor blood pressure.',
-        confidence_score: 87.5,
-        is_verified: false,
-      },
-      {
-        id: 'med_002_2',
-        medication_name: 'Metformin HCl',
-        generic_name: 'Metformin Hydrochloride',
-        dosage: '500 mg',
-        frequency: 'Twice daily (BID)',
-        duration: '30 days',
-        route: 'Oral',
-        instructions: 'Take 1 tablet twice daily with morning and evening meals.',
-        confidence_score: 85.0,
-        is_verified: false,
-      }
-    ]
-  },
-  {
-    id: 'rx_seed_003',
-    user_id: 'usr_pat_001',
-    patient_name: 'Angelo Reyes',
-    patient_age: 29,
-    patient_gender: 'Male',
-    patient_address: 'Mandaluyong City',
-    physician_name: 'Dr. Carmelo Diaz, MD',
-    physician_license: 'PRC-0112349',
-    clinic_hospital: 'JRU Health & Wellness Center',
-    date_issued: '2026-09-25',
-    source_image_url: 'https://images.unsplash.com/photo-1576091160399-112ba8d25d1d?auto=format&fit=crop&q=80&w=800',
-    raw_ocr_text: 'JRU HEALTH & WELLNESS CENTER\nDr. Carmelo Diaz, MD\nPatient: Angelo Reyes Age: 29 Date: 2026-09-25\nRx\nCetirizine DiHCl 10mg tab #14\nSig: 1 tab OD at night for allergic rhinitis\nSalbutamol Inhaler 100mcg\nSig: 2 puffs q4-6h PRN for wheezing',
-    ocr_confidence: 88.0,
-    ai_confidence: 94.2,
-    processing_time_ms: 3200,
-    verification_status: 'pending',
-    verified_by: null,
-    verified_at: null,
-    notes: 'Seasonal allergic rhinitis with mild bronchial hyperreactivity.',
-    created_at: '2026-09-25T11:00:00.000Z',
-    medications: [
-      {
-        id: 'med_003_1',
-        medication_name: 'Cetirizine DiHCl',
-        generic_name: 'Cetirizine Dihydrochloride',
-        dosage: '10 mg',
-        frequency: 'Once daily (OD)',
-        duration: '14 days',
-        route: 'Oral',
-        instructions: 'Take 1 tablet at night before sleep. May cause drowsiness.',
-        confidence_score: 93.0,
-        is_verified: false,
-      },
-      {
-        id: 'med_003_2',
-        medication_name: 'Salbutamol Inhaler',
-        generic_name: 'Albuterol Sulfate',
-        dosage: '100 mcg/actuation',
-        frequency: 'Every 4-6 hours as needed',
-        duration: '30 days',
-        route: 'Inhalation',
-        instructions: 'Inhale 2 puffs for sudden shortness of breath or wheezing.',
-        confidence_score: 86.0,
-        is_verified: false,
-      }
-    ]
+const UUID_PATTERN = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i
+const isUUID = value => typeof value === 'string' && UUID_PATTERN.test(value)
+const newUUID = () => crypto.randomUUID()
+const clinicalFields = ['patient_name', 'patient_age', 'patient_gender', 'patient_address',
+  'physician_name', 'physician_license', 'clinic_hospital', 'date_issued', 'notes']
+const medicationFields = ['medication_name', 'generic_name', 'dosage', 'frequency', 'duration', 'route', 'instructions']
+
+function readStore(key) {
+  try {
+    const value = JSON.parse(localStorage.getItem(key) || '[]')
+    return Array.isArray(value) ? value : []
+  } catch { return [] }
+}
+
+function writeStore(key, rows, optional = false) {
+  try { localStorage.setItem(key, JSON.stringify(rows)) } catch (error) {
+    if (!optional) throw error
+    console.warn('The remote change succeeded, but the browser cache could not be updated.')
   }
-]
+}
+
+function mergeRecord(record, previous) {
+  return { ...record, medications: (record.medications || []).map(med => ({
+    ...med,
+    // OCR IDs can differ from database UUIDs. Retain their local alias across reads/retries.
+    client_id: med.client_id || previous?.medications?.find(old => old.id === med.id)?.client_id || med.id,
+  })) }
+}
+
+function cacheRecords(records, replace = () => false) {
+  const previous = readStore(LOCAL_PRESCRIPTIONS_KEY)
+  const merged = records.map(record => mergeRecord(record, previous.find(old => old.id === record.id)))
+  const ids = new Set(merged.map(record => record.id))
+  writeStore(LOCAL_PRESCRIPTIONS_KEY, [...merged, ...previous.filter(row => !ids.has(row.id) && !replace(row))], true)
+  return merged
+}
+
+function filterRecords(records, { status = 'all', search = '', role = 'pharmacist', userId = null } = {}) {
+  const query = search.trim().toLowerCase()
+  const scoped = role === 'patient' || userId !== null
+  return records.filter(row => (!scoped || (userId && row.user_id === userId)) &&
+    (status === 'all' || row.verification_status === status) &&
+    (!query || [row.patient_name, row.physician_name, row.clinic_hospital,
+      ...(row.medications || []).map(med => med.medication_name)]
+      .some(value => String(value || '').toLowerCase().includes(query))))
+    .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))
+}
+
+function prescriptionPayload(record) {
+  return {
+    patient_name: record.patient_name ?? '', patient_age: record.patient_age ?? null,
+    patient_gender: record.patient_gender || null, patient_address: record.patient_address ?? '',
+    physician_name: record.physician_name ?? '', physician_license: record.physician_license ?? '',
+    clinic_hospital: record.clinic_hospital ?? '', date_issued: record.date_issued || null,
+    source_image_url: record.source_image_url ?? '', raw_ocr_text: record.raw_ocr_text ?? '',
+    ocr_confidence: record.ocr_confidence ?? 0, ai_confidence: record.ai_confidence ?? 0,
+    processing_time_ms: record.processing_time_ms ?? 0, notes: record.notes ?? '',
+  }
+}
+
+function normalizeMedications(medications = [], existing = [], live = false) {
+  if (!Array.isArray(medications)) throw new Error('Medications must be an array.')
+  const aliases = new Map(existing.flatMap(med => [[med.id, med], [med.client_id || med.id, med]]))
+  const ids = new Set()
+  return medications.map(med => {
+    const previous = aliases.get(med.id)
+    const id = previous?.id || (live ? newUUID() : med.id || `med_${newUUID()}`)
+    if (ids.has(id)) throw new Error('A medication ID appears more than once.')
+    ids.add(id)
+    return {
+      id, client_id: previous?.client_id || med.id || id,
+      medication_name: med.medication_name ?? '', generic_name: med.generic_name ?? '',
+      dosage: med.dosage ?? '', frequency: med.frequency ?? '', duration: med.duration ?? '',
+      route: med.route ?? '', instructions: med.instructions ?? '',
+      confidence_score: med.confidence_score ?? 0, flag_warning: med.flag_warning ?? null,
+      is_verified: med.is_verified ?? false,
+    }
+  })
+}
+
+function medicationPayload(medication, prescriptionId) {
+  const { id, medication_name, generic_name, dosage, frequency, duration, route,
+    instructions, confidence_score, flag_warning, is_verified } = medication
+  return { id, prescription_id: prescriptionId, medication_name, generic_name, dosage,
+    frequency, duration, route, instructions, confidence_score, flag_warning, is_verified }
+}
+
+async function requireResult(query, operation, requireRow = false) {
+  const { data, error } = await query
+  if (error) throw new Error(`${operation}: ${error.message || String(error)}`)
+  if (requireRow && (!data || (Array.isArray(data) && !data.length))) {
+    throw new Error(`${operation}: record was not found or access was denied.`)
+  }
+  return data
+}
+
+function detectCorrections(id, current, original, existing, user) {
+  const rows = []
+  const text = value => String(value ?? '').trim()
+  const append = (field, before, after) => rows.push({
+    id: newUUID(), prescription_id: id, user_id: user?.id || null,
+    field_name: field, original_value: text(before), corrected_value: text(after),
+    created_at: new Date().toISOString(),
+  })
+  clinicalFields.forEach(field => {
+    if (text(current[field]) !== text(original[field])) append(field, original[field], current[field])
+  })
+  const aliases = new Map(existing.flatMap(med => [[med.id, med.id], [med.client_id || med.id, med.id]]))
+  const previous = new Map((original.medications || []).map((med, i) => [aliases.get(med.id) || med.id || `index_${i}`, med]))
+  current.medications.forEach(med => {
+    const old = previous.get(med.id)
+    if (!old) append(`medication[${med.id}].added`, '', JSON.stringify(medicationFields.map(field => med[field])))
+    else {
+      medicationFields.forEach(field => {
+        if (text(old[field]) !== text(med[field])) append(`medication[${med.id}].${field}`, old[field], med[field])
+      })
+      previous.delete(med.id)
+    }
+  })
+  previous.forEach((med, key) => append(`medication[${key}].removed`, JSON.stringify(medicationFields.map(field => med[field] ?? '')), ''))
+  return rows
+}
 
 export const prescriptionService = {
-  /**
-   * Initialize local store with seeds if empty
-   */
   _ensureLocalStore() {
-    const existing = localStorage.getItem(LOCAL_PRESCRIPTIONS_KEY)
-    if (!existing) {
-      localStorage.setItem(LOCAL_PRESCRIPTIONS_KEY, JSON.stringify(SEED_PRESCRIPTIONS))
+    const rows = readStore(LOCAL_PRESCRIPTIONS_KEY)
+    // Remove only reserved legacy sample rows; preserve uploaded prescriptions.
+    const uploaded = rows.filter(row => !String(row.id || '').startsWith('rx_seed_'))
+    if (localStorage.getItem(LOCAL_PRESCRIPTIONS_KEY) === null || uploaded.length !== rows.length) {
+      writeStore(LOCAL_PRESCRIPTIONS_KEY, uploaded)
     }
   },
 
-  /**
-   * Get all prescriptions with optional status filter or search
-   */
   async getPrescriptions({ status = 'all', search = '', role = 'pharmacist', userId = null } = {}) {
-    if (isLiveSupabaseConfigured) {
+    const filters = { status, search, role, userId }
+    const live = isLiveSupabaseConfigured && (!userId || isUUID(userId))
+    const scoped = role === 'patient' || userId !== null
+    if (scoped && !userId) return []
+    if (live) {
       try {
         let query = supabase.from('prescriptions').select('*, medications(*)')
         if (status !== 'all') query = query.eq('verification_status', status)
-        if (role === 'patient' && userId) query = query.eq('user_id', userId)
-        if (search) query = query.ilike('patient_name', `%${search}%`)
-        const { data, error } = await query.order('created_at', { ascending: false })
-        if (!error && data) return data
-      } catch (e) {
-        console.warn('Supabase getPrescriptions error:', e)
-      }
+        if (scoped) query = query.eq('user_id', userId)
+        const rows = await requireResult(query.order('created_at', { ascending: false }), 'Fetch prescriptions')
+        const matchesScope = row => isUUID(row.id) && (!scoped || row.user_id === userId) &&
+          (status === 'all' || row.verification_status === status)
+        // Search is applied after the joined read so medication/physician/clinic search agrees offline and online.
+        return filterRecords(cacheRecords(rows || [], matchesScope), filters)
+      } catch (error) { console.warn('Remote prescription read failed; using cached records.', error) }
     }
-
     this._ensureLocalStore()
-    let list = JSON.parse(localStorage.getItem(LOCAL_PRESCRIPTIONS_KEY) || '[]')
-
-    if (role === 'patient' && userId) {
-      list = list.filter(p => p.user_id === userId)
-    }
-
-    if (status !== 'all') {
-      list = list.filter(p => p.verification_status === status)
-    }
-
-    if (search.trim()) {
-      const q = search.toLowerCase()
-      list = list.filter(p =>
-        p.patient_name?.toLowerCase().includes(q) ||
-        p.physician_name?.toLowerCase().includes(q) ||
-        p.clinic_hospital?.toLowerCase().includes(q) ||
-        p.medications?.some(m => m.medication_name?.toLowerCase().includes(q))
-      )
-    }
-
-    return list
+    return filterRecords(readStore(LOCAL_PRESCRIPTIONS_KEY).filter(row => !live || isUUID(row.id)), filters)
   },
 
-  /**
-   * Get single prescription by ID
-   */
   async getPrescriptionById(id) {
-    if (isLiveSupabaseConfigured) {
+    if (isLiveSupabaseConfigured && isUUID(id)) {
       try {
-        const { data, error } = await supabase
-          .from('prescriptions')
-          .select('*, medications(*)')
-          .eq('id', id)
-          .single()
-        if (!error && data) return data
-      } catch (e) {
-        console.warn('Supabase getPrescriptionById error:', e)
-      }
+        const { data, error } = await supabase.from('prescriptions').select('*, medications(*)').eq('id', id).maybeSingle()
+        if (error) throw new Error(error.message)
+        if (!data) { cacheRecords([], row => row.id === id); return null }
+        return cacheRecords([data])[0]
+      } catch (error) { console.warn('Remote prescription read failed; using cached record.', error) }
     }
-
     this._ensureLocalStore()
-    const list = JSON.parse(localStorage.getItem(LOCAL_PRESCRIPTIONS_KEY) || '[]')
-    return list.find(p => p.id === id) || null
+    return readStore(LOCAL_PRESCRIPTIONS_KEY).find(row => row.id === id) || null
   },
 
-  /**
-   * Save a newly extracted prescription
-   */
   async createPrescription(record, user) {
-    const newId = `rx_${Date.now()}`
-    const prescriptionData = {
-      id: newId,
-      user_id: user?.id || 'usr_pat_001',
-      patient_name: record.patient_name || 'Patient',
-      patient_age: record.patient_age || null,
-      patient_gender: record.patient_gender || null,
-      patient_address: record.patient_address || '',
-      physician_name: record.physician_name || 'Dr. Physician',
-      physician_license: record.physician_license || '',
-      clinic_hospital: record.clinic_hospital || '',
-      date_issued: record.date_issued || new Date().toISOString().split('T')[0],
-      source_image_url: record.source_image_url || '',
-      raw_ocr_text: record.raw_ocr_text || '',
-      ocr_confidence: record.ocr_confidence || 88.0,
-      ai_confidence: record.ai_confidence || 90.0,
-      processing_time_ms: record.processing_time_ms || 3500,
-      verification_status: 'pending',
-      verified_by: null,
-      verified_at: null,
-      notes: record.notes || '',
-      created_at: new Date().toISOString(),
-      medications: record.medications || [],
+    if (!user?.id) throw new Error('Sign in before saving a prescription.')
+    const live = isLiveSupabaseConfigured && isUUID(user?.id)
+    const id = live ? newUUID() : `rx_${newUUID()}`
+    const now = new Date().toISOString()
+    const medications = normalizeMedications(record.medications, [], live)
+    let created = {
+      ...prescriptionPayload(record), id,
+      user_id: live && isUUID(record.user_id) ? record.user_id : user?.id || 'usr_pat_001',
+      verification_status: 'pending', verified_by: null, verified_at: null,
+      corrections_count: 0, created_at: now, updated_at: now, medications,
     }
-
-    if (isLiveSupabaseConfigured) {
+    if (live) {
+      const { medications: children, ...parent } = created
+      const row = await requireResult(supabase.from('prescriptions').insert([parent]).select('*').single(), 'Create prescription', true)
       try {
-        const { data, error } = await supabase
-          .from('prescriptions')
-          .insert([prescriptionData])
-          .select()
-          .single()
-        if (!error && data) return data
-      } catch (e) {
-        console.warn('Supabase createPrescription error:', e)
+        const savedMeds = children.length ? await requireResult(supabase.from('medications')
+          .insert(children.map(med => medicationPayload(med, row.id))).select('*'), 'Create medications') : []
+        created = mergeRecord({ ...row, medications: savedMeds }, { medications: children })
+        await this.logAudit({ action: 'PRESCRIPTION_UPLOAD', resource_type: 'prescriptions', resource_id: row.id,
+          details: { patient: created.patient_name, medication_count: savedMeds.length }, user })
+      } catch (error) {
+        try { await requireResult(supabase.from('prescriptions').delete().eq('id', row.id), 'Rollback prescription') }
+        catch { throw new Error(`${error.message} Parent rollback failed; refresh before retrying.`) }
+        throw error
       }
+      return cacheRecords([created])[0]
     }
-
     this._ensureLocalStore()
-    const list = JSON.parse(localStorage.getItem(LOCAL_PRESCRIPTIONS_KEY) || '[]')
-    list.unshift(prescriptionData)
-    localStorage.setItem(LOCAL_PRESCRIPTIONS_KEY, JSON.stringify(list))
-
-    // Log to audit trail
-    this.logAudit({
-      action: 'PRESCRIPTION_UPLOAD',
-      resource_type: 'prescriptions',
-      resource_id: newId,
-      details: { patient: prescriptionData.patient_name, time: prescriptionData.created_at },
-      user
-    })
-
-    return prescriptionData
+    writeStore(LOCAL_PRESCRIPTIONS_KEY, [created, ...readStore(LOCAL_PRESCRIPTIONS_KEY)])
+    await this.logAudit({ action: 'PRESCRIPTION_UPLOAD', resource_type: 'prescriptions', resource_id: id,
+      details: { patient: created.patient_name, medication_count: medications.length }, user })
+    return created
   },
 
-  /**
-   * Verifies & Saves prescription with automatic correction logging
-   * Section 3.7.3: Corrections logged for OCR field accuracy & manual correction rate KPIs
-   */
-  async verifyPrescription(prescriptionId, updatedData, originalExtraction, user) {
-    this._ensureLocalStore()
-    const list = JSON.parse(localStorage.getItem(LOCAL_PRESCRIPTIONS_KEY) || '[]')
-    const index = list.findIndex(p => p.id === prescriptionId)
-
-    if (index === -1) throw new Error('Prescription record not found.')
-
-    const old = list[index]
-    const corrections = []
-
-    // Detect field changes between original extraction and user-confirmed record
-    const baseFields = ['patient_name', 'physician_name', 'date_issued', 'clinic_hospital']
-    baseFields.forEach(field => {
-      const orig = originalExtraction?.[field] ?? old[field]
-      const curr = updatedData[field]
-      if (orig && curr && String(orig).trim() !== String(curr).trim()) {
-        corrections.push({
-          id: `corr_${Date.now()}_${field}`,
-          prescription_id: prescriptionId,
-          user_id: user?.id || 'usr_anonymous',
-          field_name: field,
-          original_value: String(orig),
-          corrected_value: String(curr),
-          created_at: new Date().toISOString()
-        })
-      }
-    })
-
-    // Compare medications
-    updatedData.medications?.forEach((med, i) => {
-      const origMed = originalExtraction?.medications?.[i]
-      if (origMed) {
-        if (origMed.medication_name !== med.medication_name) {
-          corrections.push({
-            id: `corr_${Date.now()}_med_name_${i}`,
-            prescription_id: prescriptionId,
-            user_id: user?.id,
-            field_name: `medication[${i}].name`,
-            original_value: origMed.medication_name,
-            corrected_value: med.medication_name,
-            created_at: new Date().toISOString()
-          })
-        }
-        if (origMed.dosage !== med.dosage) {
-          corrections.push({
-            id: `corr_${Date.now()}_med_dose_${i}`,
-            prescription_id: prescriptionId,
-            user_id: user?.id,
-            field_name: `medication[${i}].dosage`,
-            original_value: origMed.dosage,
-            corrected_value: med.dosage,
-            created_at: new Date().toISOString()
-          })
-        }
-      }
-    })
-
-    // Store corrections
-    if (corrections.length > 0) {
-      const corrList = JSON.parse(localStorage.getItem(LOCAL_CORRECTIONS_KEY) || '[]')
-      localStorage.setItem(LOCAL_CORRECTIONS_KEY, JSON.stringify([...corrections, ...corrList]))
+  async verifyPrescription(id, updatedData, originalExtraction, user) {
+    const live = isLiveSupabaseConfigured && isUUID(id)
+    if (live && !isUUID(user?.id)) throw new Error('A signed-in user is required to verify a live prescription.')
+    let old
+    if (live) {
+      // Mutations must use authoritative state, never the read fallback after an authorization/network failure.
+      old = await requireResult(supabase.from('prescriptions').select('*, medications(*)').eq('id', id).single(), 'Load prescription for verification', true)
+      old = mergeRecord(old, readStore(LOCAL_PRESCRIPTIONS_KEY).find(row => row.id === id))
+    } else {
+      this._ensureLocalStore()
+      old = readStore(LOCAL_PRESCRIPTIONS_KEY).find(row => row.id === id)
     }
-
-    const verifiedRecord = {
-      ...old,
-      ...updatedData,
-      verification_status: 'verified',
-      verified_by: user?.full_name || 'Stephane Aira Cayetano, RPh',
-      verified_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-      corrections_count: (old.corrections_count || 0) + corrections.length,
+    if (!old) throw new Error('Prescription record not found.')
+    const medications = normalizeMedications(updatedData.medications ?? old.medications, old.medications, live)
+      .map(med => ({ ...med, is_verified: true }))
+    const current = { ...old, ...prescriptionPayload({ ...old, ...updatedData }), medications }
+    const baseline = old.verification_status === 'verified' ? old : originalExtraction || old
+    const corrections = detectCorrections(id, current, baseline, old.medications, user)
+    // A successful save whose response was lost must not duplicate correction/audit rows on retry.
+    if (old.verification_status === 'verified' && !corrections.length) return old
+    const now = new Date().toISOString()
+    let verified = { ...current, verification_status: 'verified', verified_by: user?.id || null,
+      verified_at: now, updated_at: now, corrections_count: Number(old.corrections_count || 0) + corrections.length }
+    if (live) {
+      const existingIds = new Set(old.medications.map(med => med.id))
+      const currentIds = new Set(medications.map(med => med.id))
+      let changedChildren = false
+      let changedParent = false
+      let loggedCorrections = false
+      try {
+        for (const med of medications) {
+          changedChildren = true
+          const payload = medicationPayload(med, id)
+          if (existingIds.has(med.id)) {
+            await requireResult(supabase.from('medications').update(payload).eq('prescription_id', id).eq('id', med.id).select('id'), 'Update medication', true)
+          } else await requireResult(supabase.from('medications').insert([payload]), 'Add medication')
+        }
+        const removed = [...existingIds].filter(medId => !currentIds.has(medId))
+        if (removed.length) {
+          changedChildren = true
+          await requireResult(supabase.from('medications').delete().eq('prescription_id', id).in('id', removed), 'Remove medications')
+        }
+        if (corrections.length) {
+          await requireResult(supabase.from('correction_logs').insert(corrections), 'Log corrections')
+          loggedCorrections = true
+        }
+        const payload = { ...prescriptionPayload(verified), verification_status: 'verified', verified_by: user.id,
+          verified_at: now, corrections_count: verified.corrections_count }
+        const parent = await requireResult(supabase.from('prescriptions').update(payload).eq('id', id).select('*').single(), 'Verify prescription', true)
+        changedParent = true
+        verified = { ...parent, medications }
+        await this.logAudit({ action: 'PRESCRIPTION_VERIFIED', resource_type: 'prescriptions', resource_id: id,
+          details: { verified_by: user.id, corrections_applied: corrections.length }, user })
+      } catch (error) {
+        // REST requests cannot form a transaction. Restore touched state where possible and surface failures.
+        try {
+          if (changedParent) await requireResult(supabase.from('prescriptions').update({ ...prescriptionPayload(old),
+            verification_status: old.verification_status, verified_by: old.verified_by, verified_at: old.verified_at,
+            corrections_count: old.corrections_count || 0 }).eq('id', id), 'Restore prescription')
+          if (changedChildren) {
+            const addedIds = medications.filter(med => !existingIds.has(med.id)).map(med => med.id)
+            if (addedIds.length) await requireResult(supabase.from('medications').delete().eq('prescription_id', id).in('id', addedIds), 'Restore added medications')
+            if (old.medications.length) await requireResult(supabase.from('medications')
+              .upsert(old.medications.map(med => medicationPayload(med, id))), 'Restore medications')
+          }
+          if (loggedCorrections) {
+            const removed = await requireResult(supabase.from('correction_logs').delete()
+              .in('id', corrections.map(row => row.id)).select('id'), 'Restore corrections')
+            // Admin-only history mutation can prevent rollback by a patient/pharmacist.
+            if (removed?.length !== corrections.length) throw new Error('Correction history requires administrator recovery.')
+          }
+        } catch { throw new Error(`${error.message} Verification rollback could not complete; refresh before retrying.`) }
+        throw error
+      }
+      cacheRecords([verified])
+      if (corrections.length) writeStore(LOCAL_CORRECTIONS_KEY, [...corrections, ...readStore(LOCAL_CORRECTIONS_KEY)], true)
+      return verified
     }
-
-    list[index] = verifiedRecord
-    localStorage.setItem(LOCAL_PRESCRIPTIONS_KEY, JSON.stringify(list))
-
-    // Audit log
-    this.logAudit({
-      action: 'PRESCRIPTION_VERIFIED',
-      resource_type: 'prescriptions',
-      resource_id: prescriptionId,
-      details: {
-        verified_by: verifiedRecord.verified_by,
-        corrections_applied: corrections.length
-      },
-      user
-    })
-
-    return verifiedRecord
+    writeStore(LOCAL_PRESCRIPTIONS_KEY, readStore(LOCAL_PRESCRIPTIONS_KEY).map(row => row.id === id ? verified : row))
+    if (corrections.length) writeStore(LOCAL_CORRECTIONS_KEY, [...corrections, ...readStore(LOCAL_CORRECTIONS_KEY)])
+    await this.logAudit({ action: 'PRESCRIPTION_VERIFIED', resource_type: 'prescriptions', resource_id: id,
+      details: { verified_by: verified.verified_by, corrections_applied: corrections.length }, user })
+    return verified
   },
 
-  /**
-   * Delete prescription
-   */
   async deletePrescription(id, user) {
-    this._ensureLocalStore()
-    let list = JSON.parse(localStorage.getItem(LOCAL_PRESCRIPTIONS_KEY) || '[]')
-    list = list.filter(p => p.id !== id)
-    localStorage.setItem(LOCAL_PRESCRIPTIONS_KEY, JSON.stringify(list))
-
-    this.logAudit({
-      action: 'PRESCRIPTION_DELETED',
-      resource_type: 'prescriptions',
-      resource_id: id,
-      user
-    })
+    const live = isLiveSupabaseConfigured && isUUID(id)
+    if (live && !isUUID(user?.id)) throw new Error('A signed-in user is required to delete a live prescription.')
+    if (live) await requireResult(supabase.from('prescriptions').delete().eq('id', id).select('id'), 'Delete prescription', true)
+    else this._ensureLocalStore()
+    writeStore(LOCAL_PRESCRIPTIONS_KEY, readStore(LOCAL_PRESCRIPTIONS_KEY).filter(row => row.id !== id), live)
+    writeStore(LOCAL_CORRECTIONS_KEY, readStore(LOCAL_CORRECTIONS_KEY).filter(row => row.prescription_id !== id), live)
+    try {
+      await this.logAudit({ action: 'PRESCRIPTION_DELETED', resource_type: 'prescriptions', resource_id: id, user })
+    } catch (error) {
+      const failure = new Error(`The prescription was deleted, but its audit log failed: ${error.message}`)
+      failure.deletionCompleted = true
+      throw failure
+    }
     return true
   },
 
-  /**
-   * Log an audit event (Section 3.5.1 & 3.8.1)
-   */
-  logAudit({ action, resource_type, resource_id, details = {}, user }) {
-    const logItem = {
-      id: `audit_${Date.now()}`,
-      action,
-      resource_type,
-      resource_id,
-      details,
-      user_id: user?.id || 'usr_anonymous',
-      user_email: user?.email || 'system',
-      user_role: user?.role || 'guest',
-      timestamp: new Date().toISOString(),
+  async logAudit({ action, resource_type, resource_id, details = {}, user }) {
+    const live = isLiveSupabaseConfigured && isUUID(user?.id)
+    const row = { id: newUUID(), action, resource_type, resource_id: isUUID(resource_id) ? resource_id : null,
+      details, user_id: live ? user.id : user?.id || null, user_email: user?.email || null,
+      user_role: user?.role || (live ? null : 'guest'), created_at: new Date().toISOString(),
+      user_agent: typeof navigator === 'undefined' ? null : navigator.userAgent }
+    const stored = live ? await requireResult(supabase.from('audit_logs').insert([row]).select('*').single(), 'Write audit log', true)
+      : { ...row, resource_id: resource_id || null }
+    const item = { ...stored, timestamp: stored.created_at }
+    writeStore(LOCAL_AUDIT_KEY, [item, ...readStore(LOCAL_AUDIT_KEY)].slice(0, 1000), live)
+    return item
+  },
+
+  async getAuditLogs() {
+    if (isLiveSupabaseConfigured) {
+      try {
+        const rows = await requireResult(supabase.from('audit_logs').select('*').order('created_at', { ascending: false }), 'Fetch audit logs')
+        const normalized = (rows || []).map(row => ({ ...row, timestamp: row.created_at }))
+        writeStore(LOCAL_AUDIT_KEY, normalized, true)
+        return normalized
+      } catch (error) { console.warn('Remote audit read failed; using cached logs.', error) }
     }
-
-    const logs = JSON.parse(localStorage.getItem(LOCAL_AUDIT_KEY) || '[]')
-    logs.unshift(logItem)
-    localStorage.setItem(LOCAL_AUDIT_KEY, JSON.stringify(logs.slice(0, 100)))
+    return readStore(LOCAL_AUDIT_KEY)
   },
 
-  /**
-   * Retrieve audit trail
-   */
-  getAuditLogs() {
-    return JSON.parse(localStorage.getItem(LOCAL_AUDIT_KEY) || '[]')
+  async getCorrectionLogs() {
+    if (isLiveSupabaseConfigured) {
+      try {
+        const rows = await requireResult(supabase.from('correction_logs').select('*').order('created_at', { ascending: false }), 'Fetch correction logs')
+        writeStore(LOCAL_CORRECTIONS_KEY, rows || [], true)
+        return rows || []
+      } catch (error) { console.warn('Remote correction read failed; using cached logs.', error) }
+    }
+    return readStore(LOCAL_CORRECTIONS_KEY)
   },
-
-  /**
-   * Retrieve correction logs for KPI calculations
-   */
-  getCorrectionLogs() {
-    return JSON.parse(localStorage.getItem(LOCAL_CORRECTIONS_KEY) || '[]')
-  }
 }

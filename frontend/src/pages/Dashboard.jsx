@@ -1,8 +1,8 @@
 // ==============================================================================
 // MEDISEENA PATIENT DASHBOARD
 // Figma: PRESCRIPTION PAGE (PATIENT DASHBOARD) 671:7923 — sidebar + recent
-// prescriptions card. Wired to usePrescriptions/useAuth; falls back to the
-// Figma sample rows when the repository is empty.
+// prescriptions card. Wired to usePrescriptions/useAuth; shows an authentic
+// empty state when the patient has no uploaded prescriptions.
 // ==============================================================================
 
 import { useMemo, useState } from 'react'
@@ -18,23 +18,6 @@ import logo from '../assets/logo.png'
 import usePrescriptions from '../hooks/usePrescriptions.js'
 import { useAuth } from '../context/AuthContext.jsx'
 import { formatDate } from '../utils/Formatters.js'
-
-// Exact sample rows from the Figma design (used when repository is empty)
-const FIGMA_SAMPLE_ROWS = [
-  { name: 'Omeprazole', date: 'Jul 18, 2026' },
-  { name: 'Pantoprazole', date: 'Jun 29, 2026' },
-  { name: 'Salbutamol', date: 'Apr 23, 2026' },
-  { name: 'Amoxicillin', date: 'Apr 23, 2026' },
-  { name: 'Loratadine', date: 'Mar 08, 2026' },
-  { name: 'Paracetamol', date: 'Feb 14, 2026' },
-  { name: 'Paracetamol', date: 'Jan 27, 2026' },
-  { name: 'Ibuprofen', date: 'Dec 05, 2025' },
-  { name: 'Cetirizine', date: 'Oct 19, 2025' },
-  { name: 'Azithromycin', date: 'Aug 07, 2025' },
-  { name: 'Cetirizine', date: 'Aug 07, 2025' },
-  { name: 'Amlodipine', date: 'May 16, 2025' },
-  { name: 'Cetirizine', date: 'Feb 03, 2025' },
-]
 
 const NAV_ITEMS = [
   { label: 'Upload', href: '/upload', icon: Upload, active: false },
@@ -59,22 +42,26 @@ function Wordmark({ compact = false }) {
 
 export default function Dashboard() {
   const { user } = useAuth()
-  const { prescriptions } = usePrescriptions()
+  // Patient dashboard strictly queries the logged-in user's own prescriptions.
+  const { prescriptions, loading } = usePrescriptions({
+    forcedRole: 'patient',
+    forcedUserId: user?.id,
+  })
   const [query, setQuery] = useState('')
 
-  const firstName = user?.full_name?.split(' ')[0] || 'Juan'
+  const firstName = user?.full_name?.split(' ')[0] || user?.email?.split('@')[0] || 'Patient'
 
-  // Flatten prescription records into per-medication rows; fall back to
-  // the Figma sample rows when the repository is empty.
-  const rows = useMemo(() => {
-    const fromRecords = (prescriptions || []).flatMap((p) =>
-      (p.medications || []).map((m) => ({
-        name: m.medication_name || 'Prescription',
-        date: formatDate(p.date_issued),
-      })),
-    )
-    return fromRecords.length > 0 ? fromRecords : FIGMA_SAMPLE_ROWS
-  }, [prescriptions])
+  // Flatten the patient's prescription records into per-medication rows.
+  const rows = useMemo(
+    () =>
+      (prescriptions || []).flatMap((p) =>
+        (p.medications || []).map((m) => ({
+          name: m.medication_name || 'Prescription',
+          date: formatDate(p.date_issued),
+        })),
+      ),
+    [prescriptions],
+  )
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -149,51 +136,76 @@ export default function Dashboard() {
               Here are your recent prescriptions.
             </p>
 
-            {/* Search — Figma search box */}
-            <label className="mt-6 flex h-16 items-center gap-3 rounded-[12px] border-2 border-teal bg-white px-5 focus-within:border-teal-deep lg:h-[72px]">
-              <input
-                type="text"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search prescriptions"
-                className="w-full bg-transparent text-[18px] font-medium text-black placeholder:text-[#bab4b4] focus:outline-none lg:text-[24px]"
-              />
-              <Search className="h-7 w-7 shrink-0 text-teal" strokeWidth={2} />
-            </label>
-
-            {/* Table header */}
-            <div className="mt-6 grid grid-cols-[1fr_auto] items-center gap-4 border-b border-teal-light px-1 pb-3 text-[16px] font-medium text-black sm:grid-cols-[1fr_180px_210px] lg:text-[24px]">
-              <span>Prescription</span>
-              <span className="hidden sm:block">Date</span>
-              <span className="text-right sm:text-left">Status</span>
-            </div>
-
-            {/* Rows */}
-            {filtered.length === 0 ? (
-              <p className="px-1 py-8 text-center text-[16px] text-slate-500">
-                No prescriptions matching “{query}”.
+            {loading ? (
+              <p className="px-1 py-10 text-center text-[16px] text-slate-500">
+                Loading your prescriptions…
               </p>
+            ) : rows.length === 0 ? (
+              <div className="mt-6 flex flex-col items-center justify-center rounded-[15px] border border-dashed border-teal/40 bg-white px-6 py-12 text-center">
+                <FileText className="h-10 w-10 text-teal" strokeWidth={1.5} />
+                <h3 className="mt-3 text-[24px] font-semibold text-black sm:text-[28px]">
+                  No Prescriptions Yet
+                </h3>
+                <p className="mt-2 max-w-md text-[16px] font-normal text-slate-600 sm:text-[18px]">
+                  You haven't uploaded any prescriptions yet. Upload your prescription to track your medications.
+                </p>
+                <a
+                  href="/upload"
+                  className="mt-6 inline-flex items-center gap-2 rounded-[12px] bg-teal px-6 py-3 text-[16px] font-medium text-white transition hover:bg-teal-deep sm:text-[18px]"
+                >
+                  <Upload className="h-5 w-5" strokeWidth={1.75} />
+                  <span>Upload Prescription</span>
+                </a>
+              </div>
             ) : (
-              <ul>
-                {filtered.map((row, idx) => (
-                  <li
-                    key={`${row.name}-${row.date}-${idx}`}
-                    className="grid grid-cols-[1fr_auto] items-center gap-4 border-b border-teal-light px-1 py-4 sm:grid-cols-[1fr_180px_210px] lg:py-5"
-                  >
-                    <span className="truncate text-[16px] font-medium text-black lg:text-[24px]">
-                      {row.name}
-                    </span>
-                    <span className="hidden text-[16px] font-medium text-black sm:block lg:text-[24px]">
-                      {row.date}
-                    </span>
-                    <span className="justify-self-stretch">
-                      <span className="mx-[5px] block rounded-[12px] border border-black/10 bg-teal-light px-6 py-2 text-center text-[16px] font-medium text-black lg:py-2.5 lg:text-[24px]">
-                        Saved
-                      </span>
-                    </span>
-                  </li>
-                ))}
-              </ul>
+              <>
+                {/* Search — Figma search box */}
+                <label className="mt-6 flex h-16 items-center gap-3 rounded-[12px] border-2 border-teal bg-white px-5 focus-within:border-teal-deep lg:h-[72px]">
+                  <input
+                    type="text"
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder="Search prescriptions"
+                    className="w-full bg-transparent text-[18px] font-medium text-black placeholder:text-[#bab4b4] focus:outline-none lg:text-[24px]"
+                  />
+                  <Search className="h-7 w-7 shrink-0 text-teal" strokeWidth={2} />
+                </label>
+
+                {/* Table header */}
+                <div className="mt-6 grid grid-cols-[1fr_auto] items-center gap-4 border-b border-teal-light px-1 pb-3 text-[16px] font-medium text-black sm:grid-cols-[1fr_180px_210px] lg:text-[24px]">
+                  <span>Prescription</span>
+                  <span className="hidden sm:block">Date</span>
+                  <span className="text-right sm:text-left">Status</span>
+                </div>
+
+                {/* Rows */}
+                {filtered.length === 0 ? (
+                  <p className="px-1 py-8 text-center text-[16px] text-slate-500">
+                    No prescriptions matching “{query}”.
+                  </p>
+                ) : (
+                  <ul>
+                    {filtered.map((row, idx) => (
+                      <li
+                        key={`${row.name}-${row.date}-${idx}`}
+                        className="grid grid-cols-[1fr_auto] items-center gap-4 border-b border-teal-light px-1 py-4 sm:grid-cols-[1fr_180px_210px] lg:py-5"
+                      >
+                        <span className="truncate text-[16px] font-medium text-black lg:text-[24px]">
+                          {row.name}
+                        </span>
+                        <span className="hidden text-[16px] font-medium text-black sm:block lg:text-[24px]">
+                          {row.date}
+                        </span>
+                        <span className="justify-self-stretch">
+                          <span className="mx-[5px] block rounded-[12px] border border-black/10 bg-teal-light px-6 py-2 text-center text-[16px] font-medium text-black lg:py-2.5 lg:text-[24px]">
+                            Saved
+                          </span>
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </>
             )}
           </section>
         </main>

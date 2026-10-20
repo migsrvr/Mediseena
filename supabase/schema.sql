@@ -8,8 +8,12 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 -- 2. USER ROLES ENUM
-CREATE TYPE user_role AS ENUM ('patient', 'pharmacist', 'admin');
-CREATE TYPE prescription_status AS ENUM ('pending', 'verified', 'rejected');
+DO $$ BEGIN
+    CREATE TYPE public.user_role AS ENUM ('patient', 'pharmacist', 'admin');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN
+    CREATE TYPE public.prescription_status AS ENUM ('pending', 'verified', 'rejected');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 -- 3. PROFILES TABLE (Linked with auth.users)
 CREATE TABLE IF NOT EXISTS public.profiles (
@@ -21,9 +25,22 @@ CREATE TABLE IF NOT EXISTS public.profiles (
     phone_number TEXT,
     organization TEXT, -- Clinic / Pharmacy / Hospital
     avatar_url TEXT,
+    date_of_birth DATE,
+    address TEXT,
+    allergies TEXT DEFAULT 'None',
+    blood_type TEXT DEFAULT 'None',
+    conditions TEXT DEFAULT 'None',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Also upgrade existing installations; CREATE TABLE IF NOT EXISTS does not add columns.
+ALTER TABLE public.profiles
+    ADD COLUMN IF NOT EXISTS date_of_birth DATE,
+    ADD COLUMN IF NOT EXISTS address TEXT,
+    ADD COLUMN IF NOT EXISTS allergies TEXT DEFAULT 'None',
+    ADD COLUMN IF NOT EXISTS blood_type TEXT DEFAULT 'None',
+    ADD COLUMN IF NOT EXISTS conditions TEXT DEFAULT 'None';
 
 -- Trigger for profile updated_at
 CREATE OR REPLACE FUNCTION public.handle_updated_at()
@@ -34,7 +51,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER update_profiles_modtime
+CREATE OR REPLACE TRIGGER update_profiles_modtime
     BEFORE UPDATE ON public.profiles
     FOR EACH ROW EXECUTE PROCEDURE public.handle_updated_at();
 
@@ -47,12 +64,12 @@ BEGIN
         NEW.id,
         NEW.email,
         COALESCE(NEW.raw_user_meta_data->>'full_name', split_part(NEW.email, '@', 1)),
-        COALESCE((NEW.raw_user_meta_data->>'role')::public.user_role, 'patient'::public.user_role),
+        'patient'::public.user_role, -- Staff roles must be provisioned by a trusted administrator.
         NEW.raw_user_meta_data->>'license_number'
     );
     RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = '';
 
 CREATE OR REPLACE TRIGGER on_auth_user_created
     AFTER INSERT ON auth.users
@@ -76,6 +93,7 @@ CREATE TABLE IF NOT EXISTS public.prescriptions (
     ai_confidence NUMERIC(5, 2) DEFAULT 0.00,
     processing_time_ms INT DEFAULT 0, -- In milliseconds
     verification_status prescription_status NOT NULL DEFAULT 'pending',
+    corrections_count INT NOT NULL DEFAULT 0 CHECK (corrections_count >= 0),
     verified_by UUID REFERENCES public.profiles(id),
     verified_at TIMESTAMPTZ,
     notes TEXT,
@@ -83,7 +101,9 @@ CREATE TABLE IF NOT EXISTS public.prescriptions (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TRIGGER update_prescriptions_modtime
+ALTER TABLE public.prescriptions ADD COLUMN IF NOT EXISTS corrections_count INT NOT NULL DEFAULT 0 CHECK (corrections_count >= 0);
+
+CREATE OR REPLACE TRIGGER update_prescriptions_modtime
     BEFORE UPDATE ON public.prescriptions
     FOR EACH ROW EXECUTE PROCEDURE public.handle_updated_at();
 
@@ -100,8 +120,11 @@ CREATE TABLE IF NOT EXISTS public.medications (
     instructions TEXT,             -- e.g. "Take with food"
     confidence_score NUMERIC(5,2) DEFAULT 90.00,
     is_verified BOOLEAN NOT NULL DEFAULT FALSE,
+    flag_warning TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE public.medications ADD COLUMN IF NOT EXISTS flag_warning TEXT;
 
 -- 6. CORRECTION LOGS TABLE (For calculating OCR field accuracy and manual correction rate KPIs)
 CREATE TABLE IF NOT EXISTS public.correction_logs (
@@ -152,99 +175,121 @@ ALTER TABLE public.correction_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.kpi_metrics ENABLE ROW LEVEL SECURITY;
 
--- Helper function to check role
+DROP POLICY IF EXISTS "Users can view own profile" ON public.profiles;
+DROP POLICY IF EXISTS "Users can insert own profile" ON public.profiles;
+DROP POLICY IF EXISTS "Users can update own profile" ON public.profiles;
+DROP POLICY IF EXISTS "Prescription select policy" ON public.prescriptions;
+DROP POLICY IF EXISTS "Prescription insert policy" ON public.prescriptions;
+DROP POLICY IF EXISTS "Prescription update policy" ON public.prescriptions;
+DROP POLICY IF EXISTS "Medications select policy" ON public.medications;
+DROP POLICY IF EXISTS "Medications insert/update policy" ON public.medications;
+DROP POLICY IF EXISTS "Correction logs viewable by authorized" ON public.correction_logs;
+DROP POLICY IF EXISTS "Correction logs insertable by verifiers" ON public.correction_logs;
+DROP POLICY IF EXISTS "Audit logs select policy" ON public.audit_logs;
+DROP POLICY IF EXISTS "Audit logs insert policy" ON public.audit_logs;
+DROP POLICY IF EXISTS "KPI metrics select policy" ON public.kpi_metrics;
+DROP POLICY IF EXISTS "Administrators can delete profiles" ON public.profiles;
+DROP POLICY IF EXISTS "Prescription delete policy" ON public.prescriptions;
+DROP POLICY IF EXISTS "Correction logs admin update" ON public.correction_logs;
+DROP POLICY IF EXISTS "Correction logs admin delete" ON public.correction_logs;
+DROP POLICY IF EXISTS "Audit logs admin update" ON public.audit_logs;
+DROP POLICY IF EXISTS "Audit logs admin delete" ON public.audit_logs;
+
+-- Role lookup bypasses profile RLS without trusting editable JWT metadata.
 CREATE OR REPLACE FUNCTION public.get_current_user_role()
-RETURNS user_role AS $$
+RETURNS public.user_role AS $$
     SELECT role FROM public.profiles WHERE id = auth.uid();
-$$ LANGUAGE sql SECURITY DEFINER;
+$$ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '';
+REVOKE ALL ON FUNCTION public.get_current_user_role() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.get_current_user_role() TO authenticated;
 
--- Profiles: Users can view their own profile; Pharmacists/Admins can view all profiles
-CREATE POLICY "Users can view own profile"
-    ON public.profiles FOR SELECT
+CREATE OR REPLACE FUNCTION public.protect_profile_role()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.role IS DISTINCT FROM OLD.role AND auth.uid() IS NOT NULL
+       AND COALESCE(public.get_current_user_role(), 'patient'::public.user_role) <> 'admin'::public.user_role THEN
+        RAISE EXCEPTION 'Only administrators can change profile roles' USING ERRCODE = '42501';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = '';
+CREATE OR REPLACE TRIGGER protect_profiles_role
+    BEFORE UPDATE ON public.profiles
+    FOR EACH ROW EXECUTE FUNCTION public.protect_profile_role();
+
+CREATE POLICY "Users can view own profile" ON public.profiles FOR SELECT TO authenticated
     USING (auth.uid() = id OR public.get_current_user_role() IN ('pharmacist', 'admin'));
-
-CREATE POLICY "Users can insert own profile"
-    ON public.profiles FOR INSERT
-    WITH CHECK (auth.uid() = id);
-
-CREATE POLICY "Users can update own profile"
-    ON public.profiles FOR UPDATE
-    USING (auth.uid() = id);
-
--- Prescriptions:
--- Patients see their own prescriptions.
--- Pharmacists & Admins see all prescriptions to review/verify.
-CREATE POLICY "Prescription select policy"
-    ON public.prescriptions FOR SELECT
-    USING (
-        auth.uid() = user_id OR
-        public.get_current_user_role() IN ('pharmacist', 'admin')
-    );
-
-CREATE POLICY "Prescription insert policy"
-    ON public.prescriptions FOR INSERT
-    WITH CHECK (auth.uid() = user_id OR public.get_current_user_role() IN ('pharmacist', 'admin'));
-
-CREATE POLICY "Prescription update policy"
-    ON public.prescriptions FOR UPDATE
-    USING (
-        auth.uid() = user_id OR
-        public.get_current_user_role() IN ('pharmacist', 'admin')
-    );
-
--- Medications:
-CREATE POLICY "Medications select policy"
-    ON public.medications FOR SELECT
-    USING (
-        EXISTS (
-            SELECT 1 FROM public.prescriptions p
-            WHERE p.id = medications.prescription_id
-            AND (p.user_id = auth.uid() OR public.get_current_user_role() IN ('pharmacist', 'admin'))
-        )
-    );
-
-CREATE POLICY "Medications insert/update policy"
-    ON public.medications FOR ALL
-    USING (
-        EXISTS (
-            SELECT 1 FROM public.prescriptions p
-            WHERE p.id = medications.prescription_id
-            AND (p.user_id = auth.uid() OR public.get_current_user_role() IN ('pharmacist', 'admin'))
-        )
-    );
-
--- Correction Logs:
-CREATE POLICY "Correction logs viewable by authorized"
-    ON public.correction_logs FOR SELECT
-    USING (public.get_current_user_role() IN ('pharmacist', 'admin') OR auth.uid() = user_id);
-
-CREATE POLICY "Correction logs insertable by verifiers"
-    ON public.correction_logs FOR INSERT
-    WITH CHECK (auth.uid() IS NOT NULL);
-
--- Audit Logs:
-CREATE POLICY "Audit logs select policy"
-    ON public.audit_logs FOR SELECT
+CREATE POLICY "Users can insert own profile" ON public.profiles FOR INSERT TO authenticated
+    WITH CHECK ((auth.uid() = id AND role = 'patient') OR public.get_current_user_role() = 'admin');
+CREATE POLICY "Users can update own profile" ON public.profiles FOR UPDATE TO authenticated
+    USING (auth.uid() = id OR public.get_current_user_role() = 'admin')
+    WITH CHECK (auth.uid() = id OR public.get_current_user_role() = 'admin');
+CREATE POLICY "Administrators can delete profiles" ON public.profiles FOR DELETE TO authenticated
     USING (public.get_current_user_role() = 'admin');
 
-CREATE POLICY "Audit logs insert policy"
-    ON public.audit_logs FOR INSERT
-    WITH CHECK (TRUE);
+CREATE POLICY "Prescription select policy" ON public.prescriptions FOR SELECT TO authenticated
+    USING (auth.uid() = user_id OR public.get_current_user_role() IN ('pharmacist', 'admin'));
+CREATE POLICY "Prescription insert policy" ON public.prescriptions FOR INSERT TO authenticated
+    WITH CHECK (auth.uid() = user_id OR public.get_current_user_role() IN ('pharmacist', 'admin'));
+CREATE POLICY "Prescription update policy" ON public.prescriptions FOR UPDATE TO authenticated
+    USING (auth.uid() = user_id OR public.get_current_user_role() IN ('pharmacist', 'admin'))
+    WITH CHECK (auth.uid() = user_id OR public.get_current_user_role() IN ('pharmacist', 'admin'));
+CREATE POLICY "Prescription delete policy" ON public.prescriptions FOR DELETE TO authenticated
+    USING (auth.uid() = user_id OR public.get_current_user_role() IN ('pharmacist', 'admin'));
 
--- KPI Metrics:
-CREATE POLICY "KPI metrics select policy"
-    ON public.kpi_metrics FOR SELECT
-    USING (TRUE);
+CREATE POLICY "Medications select policy" ON public.medications FOR SELECT TO authenticated
+    USING (EXISTS (SELECT 1 FROM public.prescriptions p WHERE p.id = medications.prescription_id
+        AND (p.user_id = auth.uid() OR public.get_current_user_role() IN ('pharmacist', 'admin'))));
+CREATE POLICY "Medications insert/update policy" ON public.medications FOR ALL TO authenticated
+    USING (EXISTS (SELECT 1 FROM public.prescriptions p WHERE p.id = medications.prescription_id
+        AND (p.user_id = auth.uid() OR public.get_current_user_role() IN ('pharmacist', 'admin'))))
+    WITH CHECK (EXISTS (SELECT 1 FROM public.prescriptions p WHERE p.id = medications.prescription_id
+        AND (p.user_id = auth.uid() OR public.get_current_user_role() IN ('pharmacist', 'admin'))));
+
+CREATE POLICY "Correction logs viewable by authorized" ON public.correction_logs FOR SELECT TO authenticated
+    USING (public.get_current_user_role() IN ('pharmacist', 'admin') OR EXISTS (
+        SELECT 1 FROM public.prescriptions p WHERE p.id = correction_logs.prescription_id AND p.user_id = auth.uid()));
+CREATE POLICY "Correction logs insertable by verifiers" ON public.correction_logs FOR INSERT TO authenticated
+    WITH CHECK (user_id = auth.uid() AND EXISTS (
+        SELECT 1 FROM public.prescriptions p WHERE p.id = correction_logs.prescription_id
+        AND (p.user_id = auth.uid() OR public.get_current_user_role() IN ('pharmacist', 'admin'))));
+CREATE POLICY "Correction logs admin update" ON public.correction_logs FOR UPDATE TO authenticated
+    USING (public.get_current_user_role() = 'admin') WITH CHECK (public.get_current_user_role() = 'admin');
+CREATE POLICY "Correction logs admin delete" ON public.correction_logs FOR DELETE TO authenticated
+    USING (public.get_current_user_role() = 'admin');
+
+CREATE POLICY "Audit logs select policy" ON public.audit_logs FOR SELECT TO authenticated
+    USING (user_id = auth.uid() OR public.get_current_user_role() IN ('pharmacist', 'admin'));
+CREATE POLICY "Audit logs insert policy" ON public.audit_logs FOR INSERT TO authenticated
+    WITH CHECK (user_id = auth.uid() AND (user_role IS NULL OR user_role = public.get_current_user_role()::TEXT));
+CREATE POLICY "Audit logs admin update" ON public.audit_logs FOR UPDATE TO authenticated
+    USING (public.get_current_user_role() = 'admin') WITH CHECK (public.get_current_user_role() = 'admin');
+CREATE POLICY "Audit logs admin delete" ON public.audit_logs FOR DELETE TO authenticated
+    USING (public.get_current_user_role() = 'admin');
+
+CREATE POLICY "KPI metrics select policy" ON public.kpi_metrics FOR SELECT USING (TRUE);
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.profiles, public.prescriptions,
+    public.medications, public.correction_logs, public.audit_logs TO authenticated;
+GRANT SELECT ON public.kpi_metrics TO authenticated, anon;
+
+CREATE INDEX IF NOT EXISTS prescriptions_user_created_idx ON public.prescriptions(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS medications_prescription_idx ON public.medications(prescription_id);
+CREATE INDEX IF NOT EXISTS correction_logs_prescription_idx ON public.correction_logs(prescription_id);
+CREATE INDEX IF NOT EXISTS audit_logs_user_created_idx ON public.audit_logs(user_id, created_at DESC);
 
 -- 10. STORAGE BUCKET (prescriptions)
 INSERT INTO storage.buckets (id, name, public) 
 VALUES ('prescriptions', 'prescriptions', false)
 ON CONFLICT (id) DO NOTHING;
 
+DROP POLICY IF EXISTS "Prescription images access policy" ON storage.objects;
+DROP POLICY IF EXISTS "Prescription images upload policy" ON storage.objects;
+
 CREATE POLICY "Prescription images access policy"
-ON storage.objects FOR SELECT
+ON storage.objects FOR SELECT TO authenticated
 USING (bucket_id = 'prescriptions' AND (auth.uid()::text = (storage.foldername(name))[1] OR public.get_current_user_role() IN ('pharmacist', 'admin')));
 
 CREATE POLICY "Prescription images upload policy"
-ON storage.objects FOR INSERT
+ON storage.objects FOR INSERT TO authenticated
 WITH CHECK (bucket_id = 'prescriptions' AND auth.uid() IS NOT NULL);

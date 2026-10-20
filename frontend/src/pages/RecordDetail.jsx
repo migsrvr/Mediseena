@@ -5,6 +5,7 @@
 
 import { useState, useEffect } from 'react'
 import AppHeader from '../components/common/AppHeader.jsx'
+import { useAuth } from '../context/AuthContext.jsx'
 import { prescriptionService } from '../services/prescriptionService.js'
 import { exportToJSON, exportToPDF } from '../services/exportService.js'
 import { formatDate, formatDateTime, getStatusBadgeClass, formatConfidence, getConfidenceBadgeClass } from '../utils/Formatters.js'
@@ -20,12 +21,16 @@ import {
   User,
   Pill,
   History,
-  FileCheck
+  FileCheck,
+  Trash2
 } from 'lucide-react'
 
 export default function RecordDetail({ recordId }) {
+  const { user } = useAuth()
   const [record, setRecord] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState('')
 
   useEffect(() => {
     // Determine record ID from prop or URL pathname: /records/:id
@@ -47,7 +52,7 @@ export default function RecordDetail({ recordId }) {
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-50 font-poppins">
-        <AppHeader currentPath="/records" />
+        <AppHeader currentPath="/dashboard" />
         <div className="flex h-96 items-center justify-center text-sm font-semibold text-slate-500">
           Loading prescription details...
         </div>
@@ -58,15 +63,15 @@ export default function RecordDetail({ recordId }) {
   if (!record) {
     return (
       <div className="min-h-screen bg-slate-50 font-poppins">
-        <AppHeader currentPath="/records" />
+        <AppHeader currentPath="/dashboard" />
         <div className="mx-auto max-w-2xl px-4 py-16 text-center">
           <h2 className="text-xl font-bold text-slate-800">Prescription Record Not Found</h2>
           <p className="mt-1 text-xs text-slate-500">The requested prescription ID does not exist or was removed.</p>
           <a
-            href="/records"
+            href="/dashboard"
             className="mt-4 inline-flex items-center gap-2 rounded-xl bg-teal px-4 py-2 text-xs font-bold text-white"
           >
-            <ArrowLeft className="h-4 w-4" /> Back to Records
+            <ArrowLeft className="h-4 w-4" /> Back to Dashboard
           </a>
         </div>
       </div>
@@ -74,6 +79,24 @@ export default function RecordDetail({ recordId }) {
   }
 
   const isVerified = record.verification_status === 'verified'
+
+  const handleDelete = async () => {
+    const confirmed = window.confirm(
+      'Are you sure you want to delete this prescription? This action cannot be undone.'
+    )
+    if (!confirmed) return
+
+    setDeleting(true)
+    setDeleteError('')
+    try {
+      await prescriptionService.deletePrescription(record.id, user)
+      window.location.href = '/dashboard'
+    } catch (err) {
+      console.error('Failed to delete prescription:', err)
+      setDeleteError('Could not delete this prescription. Please try again.')
+      setDeleting(false)
+    }
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 font-poppins pb-16">
@@ -84,10 +107,10 @@ export default function RecordDetail({ recordId }) {
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-8">
           <div>
             <a
-              href="/records"
+              href="/dashboard"
               className="inline-flex items-center gap-1 text-xs font-semibold text-teal hover:text-teal-deep mb-2"
             >
-              <ArrowLeft className="h-3.5 w-3.5" /> Back to All Records
+              <ArrowLeft className="h-3.5 w-3.5" /> Back to Dashboard
             </a>
             <h1 className="text-2xl font-bold text-slate-900 sm:text-3xl">
               Prescription #{record.id.substring(0, 12)}
@@ -97,7 +120,7 @@ export default function RecordDetail({ recordId }) {
             </p>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <button
               type="button"
               onClick={() => exportToJSON(record)}
@@ -114,8 +137,21 @@ export default function RecordDetail({ recordId }) {
               <Download className="h-4 w-4" />
               <span>Download PDF</span>
             </button>
+            <button
+              type="button"
+              onClick={handleDelete}
+              disabled={deleting}
+              className="flex items-center gap-2 rounded-xl border border-rose-200 bg-white px-4 py-2.5 text-xs font-bold text-rose-600 shadow-2xs hover:border-rose-300 hover:bg-rose-50 transition disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <Trash2 className="h-4 w-4" />
+              <span>{deleting ? 'Deleting…' : 'Delete Prescription'}</span>
+            </button>
           </div>
         </div>
+
+        {deleteError && (
+          <p className="mb-6 -mt-4 text-xs font-semibold text-rose-600">{deleteError}</p>
+        )}
 
         {/* Status Header Bar */}
         <div className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-3xl border border-slate-200 bg-white p-6 shadow-xs">

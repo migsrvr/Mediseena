@@ -1,33 +1,99 @@
-// ==============================================================================
-// MEDISEENA REVIEW & VERIFICATION PAGE
-// Section 3.7.3 & 3.4.3: Editable Form, Confidence Badges, Manual Correction Logging,
-// Dual Viewport (Image + Form), Record Confirmation & PostgreSQL Storage
-// ==============================================================================
-
-import { useState, useEffect } from 'react'
-import AppHeader from '../components/common/AppHeader.jsx'
+// Review the source prescription alongside editable OCR results.
+import { useState, useEffect, useRef } from 'react'
 import { prescriptionService } from '../services/prescriptionService.js'
+import { lookupFormulary } from '../services/clinicalFormulary.js'
 import { exportToJSON, exportToPDF } from '../services/exportService.js'
 import { useAuth } from '../context/AuthContext.jsx'
-import { getConfidenceBadgeClass, formatConfidence } from '../utils/Formatters.js'
-import {
-  CheckCircle2,
-  AlertCircle,
-  FileCheck,
-  Download,
-  FileText,
-  Plus,
-  Trash2,
-  Edit3,
-  ZoomIn,
-  ShieldCheck,
-  History,
-  Sparkles,
-  ArrowLeft
-} from 'lucide-react'
+import { formatConfidence } from '../utils/Formatters.js'
+import { validatePrescriptionRecord } from '../utils/validators.js'
+import { AlertCircle, CheckCircle2, ChevronDown, Download, FileText, Minus, Plus, Trash2 } from 'lucide-react'
+import backArrow from '../assets/review/back-arrow.svg'
+import decoration from '../assets/review/decoration.svg'
+
+function ReviewField({ id, label, value, onChange, type = 'text', error, required = false, options, multiline = false, compact = false, ...rest }) {
+  const textareaRef = useRef(null)
+  useEffect(() => {
+    const textarea = textareaRef.current
+    if (!textarea) return
+    const resize = () => {
+      textarea.style.height = 'auto'
+      textarea.style.height = `${textarea.scrollHeight + 2}px`
+    }
+    resize()
+    let lastWidth = textarea.getBoundingClientRect().width
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry.contentRect.width === lastWidth) return
+      lastWidth = entry.contentRect.width
+      resize()
+    })
+    observer.observe(textarea)
+    return () => observer.disconnect()
+  }, [value, multiline])
+  const inputClass = `block w-full min-w-0 rounded-[6px] border bg-card-bg font-medium text-teal-deep outline-none transition focus:border-teal focus:ring-2 focus:ring-teal/20 ${compact ? 'min-h-12 px-4 py-3 text-sm' : 'min-h-[62px] px-6 py-4 text-base lg:text-xl'} ${error ? 'border-rose-400' : 'border-transparent'}`
+  const shared = { id, value: value ?? '', onChange, required, 'aria-invalid': Boolean(error), 'aria-describedby': error ? `${id}-error` : undefined, className: inputClass, ...rest }
+  return (
+    <div className="min-w-0">
+      <label htmlFor={id} className={`mb-3 block font-extrabold text-teal-deep ${compact ? 'text-sm' : 'text-base lg:text-xl'}`}>
+        {label}
+      </label>
+      {options ? (
+        <select {...shared}>
+          <option value="">Not extracted</option>
+          {options.map(option => <option key={option} value={option}>{option}</option>)}
+        </select>
+      ) : multiline ? <textarea {...shared} ref={textareaRef} rows={1} className={`${inputClass} resize-y`} /> : <input {...shared} type={type} />}
+      {error && <p id={`${id}-error`} className="mt-2 text-sm text-rose-700">{error}</p>}
+    </div>
+  )
+}
+
+function ReviewDetails({ title, children }) {
+  return (
+    <details className="group rounded-xl border border-teal-light px-4 py-3">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-sm font-semibold text-teal-deep outline-none focus-visible:ring-2 focus-visible:ring-teal [&::-webkit-details-marker]:hidden">
+        {title}
+        <ChevronDown aria-hidden="true" className="h-4 w-4 shrink-0 transition-transform group-open:rotate-180" />
+      </summary>
+      <div className="mt-5 space-y-5">{children}</div>
+    </details>
+  )
+}
+
+function BackToUpload() {
+  return (
+    <a href="/upload" aria-label="Back to Upload" className="absolute left-5 top-5 z-10 flex h-11 w-11 items-center justify-center rounded-xl transition hover:bg-teal-light/60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal lg:left-[calc(8.05%-10px)] lg:top-[39px]">
+      <span aria-hidden="true" className="flex h-[30px] w-6 items-center justify-center">
+        <img src={backArrow} alt="" className="origin-center scale-x-[3.259] scale-y-[2.357]" />
+      </span>
+    </a>
+  )
+}
+
+export function countReviewCorrections(record, original) {
+  if (!record || !original) return 0
+  const changed = (a, b) => String(a ?? '').trim() !== String(b ?? '').trim()
+  const fields = ['patient_name', 'patient_age', 'patient_gender', 'patient_address',
+    'physician_name', 'physician_license', 'clinic_hospital', 'date_issued', 'notes']
+  const medicationFields = ['medication_name', 'generic_name', 'dosage', 'frequency',
+    'duration', 'route', 'instructions']
+  let count = fields.filter(field => changed(record[field], original[field])).length
+  const originals = new Map((original.medications || []).map((med, i) => [med.id || `index_${i}`, med]))
+  const medications = record.medications || []
+  medications.forEach((med, i) => {
+    const key = med.id || `index_${i}`
+    const previous = originals.get(key)
+    if (previous) {
+      count += medicationFields.filter(field => changed(med[field], previous[field])).length
+      originals.delete(key)
+    } else {
+      count++
+    }
+  })
+  return count + originals.size
+}
 
 export default function ReviewExtraction() {
-  const { user, role, isPharmacist } = useAuth()
+  const { user } = useAuth()
   const [dataLoaded, setDataLoaded] = useState(false)
   const [record, setRecord] = useState(null)
   const [originalExtraction, setOriginalExtraction] = useState(null)
@@ -35,6 +101,10 @@ export default function ReviewExtraction() {
   const [saveSuccess, setSaveSuccess] = useState(false)
   const [correctionsCount, setCorrectionsCount] = useState(0)
   const [zoomLevel, setZoomLevel] = useState(1)
+  const [validationErrors, setValidationErrors] = useState({})
+  const [saveError, setSaveError] = useState('')
+  const saveLock = useRef(false)
+  const redirectTimer = useRef(null)
 
   useEffect(() => {
     // Retrieve pending review draft from sessionStorage
@@ -42,12 +112,17 @@ export default function ReviewExtraction() {
     if (stored) {
       try {
         const parsed = JSON.parse(stored)
+        if (!parsed?.draft || typeof parsed.draft !== 'object' || !Array.isArray(parsed.draft.medications)) {
+          throw new Error('Invalid prescription draft')
+        }
         setRecord(parsed.draft)
         setOriginalExtraction(parsed.originalExtraction || parsed.draft)
         setDataLoaded(true)
         return
       } catch (e) {
         console.error('Failed to parse draft:', e)
+        setDataLoaded(true)
+        return
       }
     }
 
@@ -56,33 +131,27 @@ export default function ReviewExtraction() {
   }, [])
 
   const loadFallbackDraft = async () => {
-    const list = await prescriptionService.getPrescriptions({ status: 'pending' })
-    const pendingItem = list[0] || (await prescriptionService.getPrescriptions({ status: 'all' }))[0]
-    if (pendingItem) {
-      setRecord(JSON.parse(JSON.stringify(pendingItem)))
-      setOriginalExtraction(JSON.parse(JSON.stringify(pendingItem)))
+    try {
+      const list = await prescriptionService.getPrescriptions({ status: 'pending' })
+      const pendingItem = list[0] || (await prescriptionService.getPrescriptions({ status: 'all' }))[0]
+      if (pendingItem) {
+        setRecord(JSON.parse(JSON.stringify(pendingItem)))
+        setOriginalExtraction(JSON.parse(JSON.stringify(pendingItem)))
+      }
+    } catch (err) {
+      console.error('Failed to load review:', err)
+      setSaveError('Unable to load this prescription. Return to Upload and try again.')
+    } finally {
+      setDataLoaded(true)
     }
-    setDataLoaded(true)
   }
+
+  useEffect(() => () => clearTimeout(redirectTimer.current), [])
 
   // Count manual edits dynamically
   useEffect(() => {
     if (!record || !originalExtraction) return
-    let count = 0
-    if (record.patient_name !== originalExtraction.patient_name) count++
-    if (record.patient_age !== originalExtraction.patient_age) count++
-    if (record.patient_gender !== originalExtraction.patient_gender) count++
-    if (record.physician_name !== originalExtraction.physician_name) count++
-    if (record.physician_license !== originalExtraction.physician_license) count++
-    if (record.date_issued !== originalExtraction.date_issued) count++
-
-    record.medications?.forEach((med, i) => {
-      const orig = originalExtraction.medications?.[i]
-      if (!orig || orig.medication_name !== med.medication_name || orig.dosage !== med.dosage || orig.frequency !== med.frequency) {
-        count++
-      }
-    })
-    setCorrectionsCount(count)
+    setCorrectionsCount(countReviewCorrections(record, originalExtraction))
   }, [record, originalExtraction])
 
   // Field change handler
@@ -110,9 +179,9 @@ export default function ReviewExtraction() {
           medication_name: '',
           generic_name: '',
           dosage: '',
-          frequency: 'Once daily',
-          duration: '7 days',
-          route: 'Oral',
+          frequency: '',
+          duration: '',
+          route: '',
           instructions: '',
           confidence_score: 100,
           is_verified: true,
@@ -129,446 +198,201 @@ export default function ReviewExtraction() {
     })
   }
 
-  // Confirm & Verify
+  // Validation opens hidden fields before moving keyboard focus to the first error.
   const handleConfirmVerification = async () => {
+    if (saveLock.current) return
+    const validation = validatePrescriptionRecord(record)
+    setValidationErrors(validation.errors)
+    setSaveError('')
+    if (!validation.valid) {
+      const invalidFields = Object.keys(validation.errors).map(id => document.getElementById(id))
+      const firstInvalid = invalidFields.find(Boolean)
+      for (const field of invalidFields) {
+        let details = field?.closest('details')
+        while (details) {
+          details.open = true
+          details = details.parentElement?.closest('details')
+        }
+      }
+      requestAnimationFrame(() => {
+        firstInvalid?.focus()
+        firstInvalid?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+      })
+      return
+    }
+    saveLock.current = true
     setSaving(true)
+    let confirmed = false
     try {
       let targetId = record.id
-      if (!targetId || targetId.startsWith('rx_seed') || !targetId.startsWith('rx_')) {
-        // Create new record first
+      const isPersisted = Boolean(targetId && !targetId.startsWith('rx_seed') && (targetId.startsWith('rx_') || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(targetId)))
+      if (!isPersisted) {
         const created = await prescriptionService.createPrescription(record, user)
         targetId = created.id
+        // A failed verification can be retried without creating a second record.
+        setRecord(prev => ({ ...prev, id: targetId }))
       }
-
-      await prescriptionService.verifyPrescription(
-        targetId,
-        record,
-        originalExtraction,
-        user
-      )
-
+      await prescriptionService.verifyPrescription(targetId, record, originalExtraction, user)
       sessionStorage.removeItem('mediseena_pending_review')
+      confirmed = true
       setSaveSuccess(true)
-      setTimeout(() => {
-        window.location.href = `/records`
+      redirectTimer.current = setTimeout(() => {
+        window.location.href = '/dashboard'
       }, 1500)
     } catch (err) {
       console.error('Verification error:', err)
-      alert(`Verification failed: ${err.message}`)
+      setSaveError(`Unable to confirm this prescription: ${err.message || 'Please try again.'}`)
     } finally {
       setSaving(false)
+      if (!confirmed) saveLock.current = false
     }
   }
 
   if (!dataLoaded || !record) {
     return (
-      <div className="min-h-screen bg-slate-50 font-poppins">
-        <AppHeader currentPath="/review" />
-        <div className="flex h-96 items-center justify-center">
-          <div className="text-sm font-semibold text-slate-500">Loading prescription verification workspace...</div>
-        </div>
-      </div>
-    )
-  }
-
-  return (
-    <div className="min-h-screen bg-slate-50 font-poppins pb-16">
-      <AppHeader currentPath="/review" />
-
-      {/* Verification Success Toast */}
-      {saveSuccess && (
-        <div className="fixed top-24 right-6 z-50 flex items-center gap-3 rounded-2xl bg-teal-deep text-white px-5 py-4 shadow-xl ring-1 ring-black/10">
-          <CheckCircle2 className="h-6 w-6 text-teal" />
-          <div>
-            <div className="text-sm font-bold">Prescription Verified & Saved!</div>
-            <div className="text-xs text-slate-200">
-              {correctionsCount} field corrections logged for KPI tracking. Redirecting to records...
-            </div>
-          </div>
-        </div>
-      )}
-
-      <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-        {/* Header Bar */}
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-8">
-          <div>
-            <a
-              href="/upload"
-              className="inline-flex items-center gap-1.5 text-xs font-semibold text-teal hover:text-teal-deep mb-2"
-            >
-              <ArrowLeft className="h-3.5 w-3.5" /> Back to Upload
-            </a>
-            <h1 className="text-2xl font-bold text-slate-900 sm:text-3xl">
-              Prescription Verification & Review
-            </h1>
-            <p className="mt-0.5 text-xs text-slate-500">
-              Mandatory clinical verification (Section 3.7.3). Provisional AI outputs require human validation before permanent record storage.
-            </p>
-          </div>
-
-          {/* Quick Actions (JSON & PDF Export) */}
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => exportToJSON(record)}
-              className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-700 shadow-2xs hover:bg-slate-50 transition"
-              title="Export structured JSON representation (Section 3.4.3)"
-            >
-              <FileText className="h-3.5 w-3.5 text-teal" />
-              <span>JSON Export</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => exportToPDF(record)}
-              className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-700 shadow-2xs hover:bg-slate-50 transition"
-              title="Download standardized medical prescription PDF (Section 3.4.3)"
-            >
-              <Download className="h-3.5 w-3.5 text-teal" />
-              <span>PDF Export</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Verification Status Banner */}
-        <div className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-xs">
-          <div className="flex items-center gap-3">
-            <div className={`rounded-xl px-3 py-1.5 text-xs font-bold border ${getConfidenceBadgeClass(record.ai_confidence || record.ocr_confidence)}`}>
-              AI Confidence: {formatConfidence(record.ai_confidence || record.ocr_confidence)}
-            </div>
-            <div className="text-xs text-slate-600">
-              Target OCR Field Accuracy: <span className="font-bold text-teal-deep">≥ 85%</span>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-3 text-xs">
-            {correctionsCount > 0 ? (
-              <span className="flex items-center gap-1.5 rounded-full bg-amber-50 px-3 py-1 font-bold text-amber-800 border border-amber-200">
-                <Edit3 className="h-3.5 w-3.5" />
-                {correctionsCount} Field {correctionsCount === 1 ? 'Correction' : 'Corrections'} Tracked
-              </span>
-            ) : (
-              <span className="flex items-center gap-1.5 text-emerald-700 font-medium">
-                <CheckCircle2 className="h-4 w-4" /> No manual corrections required
-              </span>
-            )}
-            <span className="text-slate-300">|</span>
-            <span className="text-slate-500">
-              Verifier: <strong>{user?.full_name || 'Pharmacist'}</strong> ({role})
-            </span>
-          </div>
-        </div>
-
-        {/* Two-Pane Workspace Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-          {/* Left Pane: Sticky Image Viewer (5 cols) */}
-          <div className="lg:col-span-5 flex flex-col gap-4">
-            <div className="sticky top-24 rounded-3xl border border-slate-200 bg-white p-4 shadow-xs">
-              <div className="flex items-center justify-between border-b pb-3 mb-3">
-                <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                  <FileCheck className="h-4 w-4 text-teal" /> Source Prescription Document
-                </span>
-                <div className="flex items-center gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => setZoomLevel((z) => Math.max(0.75, z - 0.25))}
-                    className="rounded-lg border px-2 py-0.5 text-xs font-bold text-slate-600 hover:bg-slate-100"
-                  >
-                    -
-                  </button>
-                  <span className="text-xs font-semibold text-slate-600">{Math.round(zoomLevel * 100)}%</span>
-                  <button
-                    type="button"
-                    onClick={() => setZoomLevel((z) => Math.min(2.5, z + 0.25))}
-                    className="rounded-lg border px-2 py-0.5 text-xs font-bold text-slate-600 hover:bg-slate-100"
-                  >
-                    +
-                  </button>
-                </div>
-              </div>
-
-              <div className="max-h-[520px] overflow-auto rounded-2xl bg-slate-900/5 p-3 flex items-center justify-center border">
-                <img
-                  src={record.source_image_url}
-                  alt="Prescription Scan"
-                  style={{ transform: `scale(${zoomLevel})`, transformOrigin: 'top center' }}
-                  className="rounded-lg object-contain transition-transform duration-200 max-w-full"
-                />
-              </div>
-
-              <div className="mt-3 flex items-center justify-between text-[11px] text-slate-500">
-                <span>Pan / scroll to cross-reference handwriting</span>
-                <span>Tesseract raw confidence: {formatConfidence(record.ocr_confidence)}</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Right Pane: Structured Editable Form (7 cols) */}
-          <div className="lg:col-span-7 flex flex-col gap-6">
-            {/* Section 1: Patient Information */}
-            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-xs">
-              <div className="flex items-center justify-between border-b pb-3 mb-4">
-                <h3 className="text-sm font-bold text-slate-900">1. Patient Information</h3>
-                <span className="text-[11px] font-semibold text-teal-deep bg-teal/10 px-2.5 py-0.5 rounded-full">
-                  Demographics
-                </span>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="sm:col-span-2">
-                  <label className="text-xs font-bold text-slate-700 block mb-1">
-                    Patient Full Name *
-                  </label>
-                  <input
-                    type="text"
-                    value={record.patient_name || ''}
-                    onChange={(e) => handleFieldChange('patient_name', e.target.value)}
-                    className="w-full rounded-xl border border-slate-300 px-3.5 py-2 text-sm text-slate-900 focus:border-teal focus:ring-2 focus:ring-teal/20"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-xs font-bold text-slate-700 block mb-1">Age</label>
-                  <input
-                    type="number"
-                    value={record.patient_age || ''}
-                    onChange={(e) => handleFieldChange('patient_age', e.target.value ? Number(e.target.value) : null)}
-                    className="w-full rounded-xl border border-slate-300 px-3.5 py-2 text-sm text-slate-900 focus:border-teal focus:ring-2 focus:ring-teal/20"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-xs font-bold text-slate-700 block mb-1">Gender</label>
-                  <select
-                    value={record.patient_gender || 'Male'}
-                    onChange={(e) => handleFieldChange('patient_gender', e.target.value)}
-                    className="w-full rounded-xl border border-slate-300 px-3.5 py-2 text-sm text-slate-900 focus:border-teal focus:ring-2 focus:ring-teal/20"
-                  >
-                    <option value="Male">Male</option>
-                    <option value="Female">Female</option>
-                    <option value="Other">Other</option>
-                  </select>
-                </div>
-
-                <div className="sm:col-span-2">
-                  <label className="text-xs font-bold text-slate-700 block mb-1">Patient Address</label>
-                  <input
-                    type="text"
-                    value={record.patient_address || ''}
-                    onChange={(e) => handleFieldChange('patient_address', e.target.value)}
-                    className="w-full rounded-xl border border-slate-300 px-3.5 py-2 text-sm text-slate-900 focus:border-teal focus:ring-2 focus:ring-teal/20"
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* Section 2: Physician & Clinic Information */}
-            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-xs">
-              <div className="flex items-center justify-between border-b pb-3 mb-4">
-                <h3 className="text-sm font-bold text-slate-900">2. Physician & Clinic Information</h3>
-                <span className="text-[11px] font-semibold text-teal-deep bg-teal/10 px-2.5 py-0.5 rounded-full">
-                  Credentials
-                </span>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="text-xs font-bold text-slate-700 block mb-1">Physician Name *</label>
-                  <input
-                    type="text"
-                    value={record.physician_name || ''}
-                    onChange={(e) => handleFieldChange('physician_name', e.target.value)}
-                    className="w-full rounded-xl border border-slate-300 px-3.5 py-2 text-sm text-slate-900 focus:border-teal focus:ring-2 focus:ring-teal/20"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-xs font-bold text-slate-700 block mb-1">PRC License / PTR No.</label>
-                  <input
-                    type="text"
-                    value={record.physician_license || ''}
-                    onChange={(e) => handleFieldChange('physician_license', e.target.value)}
-                    className="w-full rounded-xl border border-slate-300 px-3.5 py-2 text-sm text-slate-900 focus:border-teal focus:ring-2 focus:ring-teal/20"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-xs font-bold text-slate-700 block mb-1">Clinic / Hospital</label>
-                  <input
-                    type="text"
-                    value={record.clinic_hospital || ''}
-                    onChange={(e) => handleFieldChange('clinic_hospital', e.target.value)}
-                    className="w-full rounded-xl border border-slate-300 px-3.5 py-2 text-sm text-slate-900 focus:border-teal focus:ring-2 focus:ring-teal/20"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-xs font-bold text-slate-700 block mb-1">Date Issued *</label>
-                  <input
-                    type="date"
-                    value={record.date_issued || ''}
-                    onChange={(e) => handleFieldChange('date_issued', e.target.value)}
-                    className="w-full rounded-xl border border-slate-300 px-3.5 py-2 text-sm text-slate-900 focus:border-teal focus:ring-2 focus:ring-teal/20"
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* Section 3: Prescribed Medications */}
-            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-xs">
-              <div className="flex items-center justify-between border-b pb-3 mb-4">
-                <div>
-                  <h3 className="text-sm font-bold text-slate-900">3. Prescribed Medications (Rx)</h3>
-                  <p className="text-xs text-slate-500">Cross-reference drug name, dosage, and frequency with source scan</p>
-                </div>
-                <button
-                  type="button"
-                  onClick={handleAddMedication}
-                  className="flex items-center gap-1.5 rounded-xl bg-teal px-3 py-1.5 text-xs font-bold text-white shadow-2xs hover:bg-teal-deep transition"
-                >
-                  <Plus className="h-3.5 w-3.5" /> Add Medication
-                </button>
-              </div>
-
-              <div className="space-y-4">
-                {(record.medications || []).map((med, idx) => (
-                  <div
-                    key={med.id || idx}
-                    className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 transition hover:border-slate-300"
-                  >
-                    <div className="flex items-center justify-between mb-3">
-                      <span className="flex items-center gap-2 text-xs font-bold text-teal-deep">
-                        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-teal text-white text-[11px]">
-                          {idx + 1}
-                        </span>
-                        <span>Medication Item #{idx + 1}</span>
-                      </span>
-
-                      <div className="flex items-center gap-2">
-                        {med.confidence_score && (
-                          <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold border ${getConfidenceBadgeClass(med.confidence_score)}`}>
-                            {formatConfidence(med.confidence_score)}
-                          </span>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveMedication(idx)}
-                          className="rounded-lg p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition"
-                          title="Remove item"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                      <div className="sm:col-span-2">
-                        <label className="text-[11px] font-bold text-slate-600 block mb-1">Medication Name *</label>
-                        <input
-                          type="text"
-                          value={med.medication_name || ''}
-                          onChange={(e) => handleMedChange(idx, 'medication_name', e.target.value)}
-                          className="w-full rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900 focus:border-teal"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="text-[11px] font-bold text-slate-600 block mb-1">Dosage *</label>
-                        <input
-                          type="text"
-                          value={med.dosage || ''}
-                          onChange={(e) => handleMedChange(idx, 'dosage', e.target.value)}
-                          placeholder="e.g. 500 mg"
-                          className="w-full rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900 focus:border-teal"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="text-[11px] font-bold text-slate-600 block mb-1">Frequency (Sig)</label>
-                        <input
-                          type="text"
-                          value={med.frequency || ''}
-                          onChange={(e) => handleMedChange(idx, 'frequency', e.target.value)}
-                          placeholder="e.g. Every 8 hours"
-                          className="w-full rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900 focus:border-teal"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="text-[11px] font-bold text-slate-600 block mb-1">Duration</label>
-                        <input
-                          type="text"
-                          value={med.duration || ''}
-                          onChange={(e) => handleMedChange(idx, 'duration', e.target.value)}
-                          placeholder="e.g. 7 days"
-                          className="w-full rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900 focus:border-teal"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="text-[11px] font-bold text-slate-600 block mb-1">Route</label>
-                        <input
-                          type="text"
-                          value={med.route || 'Oral'}
-                          onChange={(e) => handleMedChange(idx, 'route', e.target.value)}
-                          className="w-full rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900 focus:border-teal"
-                        />
-                      </div>
-
-                      <div className="sm:col-span-3">
-                        <label className="text-[11px] font-bold text-slate-600 block mb-1">Instructions</label>
-                        <input
-                          type="text"
-                          value={med.instructions || ''}
-                          onChange={(e) => handleMedChange(idx, 'instructions', e.target.value)}
-                          placeholder="e.g. Take after meals with plenty of water"
-                          className="w-full rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900 focus:border-teal"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Section 4: Clinical Notes & Instructions */}
-            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-xs">
-              <h3 className="text-sm font-bold text-slate-900 mb-2">4. Special Instructions & Clinical Notes</h3>
-              <textarea
-                rows={3}
-                value={record.notes || ''}
-                onChange={(e) => handleFieldChange('notes', e.target.value)}
-                placeholder="Doctor's special instructions, allergy notes, or dietary warnings..."
-                className="w-full rounded-xl border border-slate-300 px-3.5 py-2 text-sm text-slate-900 focus:border-teal focus:ring-2 focus:ring-teal/20"
-              />
-            </div>
-
-            {/* Verification Action Bar */}
-            <div className="rounded-3xl border border-teal-border/50 bg-teal/5 p-6 flex flex-col sm:flex-row items-center justify-between gap-4">
-              <div>
-                <div className="text-sm font-bold text-teal-deep flex items-center gap-2">
-                  <ShieldCheck className="h-5 w-5 text-teal" />
-                  Mandatory Verification Confirmation
-                </div>
-                <p className="text-xs text-slate-600 mt-0.5">
-                  Confirming this record marks it as medically verified and permanently commits it to Supabase PostgreSQL.
-                </p>
-              </div>
-
-              <div className="flex items-center gap-3 w-full sm:w-auto">
-                <button
-                  type="button"
-                  disabled={saving}
-                  onClick={handleConfirmVerification}
-                  className="flex-1 sm:flex-none flex items-center justify-center gap-2 rounded-2xl bg-teal px-8 py-3.5 text-sm font-bold text-white shadow-md hover:bg-teal-deep transition active:scale-[0.99] disabled:opacity-50"
-                >
-                  <CheckCircle2 className="h-4 w-4" />
-                  <span>{saving ? 'Verifying & Saving...' : 'Verify & Confirm Record'}</span>
-                </button>
-              </div>
-            </div>
+      <main className="relative min-h-screen bg-card-bg font-poppins text-teal-deep">
+        <BackToUpload />
+        <div className="flex min-h-screen items-center justify-center px-6 text-center" role="status">
+          <div className="max-w-md space-y-4">
+            <p>{saveError || (dataLoaded ? 'No prescription is available for review. Upload a prescription to begin.' : 'Loading prescription…')}</p>
+            {dataLoaded && <a href="/upload" className="inline-block rounded-[10px] bg-teal px-6 py-3 font-semibold text-white">Back to Upload</a>}
           </div>
         </div>
       </main>
-    </div>
+    )
+  }
+
+  const disabled = saving || saveSuccess
+
+  return (
+    <main className="min-h-screen bg-card-bg font-poppins text-teal-deep lg:grid lg:grid-cols-[48.333%_51.667%] lg:items-start">
+      <section aria-label="Source prescription" className="relative min-w-0 px-6 pb-8 pt-24 lg:sticky lg:top-0 lg:px-[11.494%] lg:pb-16 lg:pt-40">
+        <BackToUpload />
+        <img src={decoration} alt="" aria-hidden="true" className="pointer-events-none absolute left-[calc(11.8%+10px)] top-[447px] hidden origin-center rotate-[17.9deg] lg:block" />
+        <div className="relative max-h-[704px] min-h-48 overflow-auto">
+          {record.source_image_url ? (
+            record.source_image_url.startsWith('data:application/pdf;') || /\.pdf(?:[?#]|$)/i.test(record.source_image_url) ? (
+              <object data={record.source_image_url} type="application/pdf" aria-label="Prescription PDF" className="h-[min(70vh,704px)] min-h-80 w-full">
+                <a href={record.source_image_url} download="prescription.pdf" className="text-sm underline">Download source prescription PDF</a>
+              </object>
+            ) : (
+              <img src={record.source_image_url} alt="Original prescription for comparison with extracted information" className="mx-auto block h-auto max-w-none object-contain" style={{ width: `${zoomLevel * 100}%`, maxHeight: `${704 * zoomLevel}px` }} />
+            )
+          ) : <p className="py-16 text-center text-sm">No source document is available for this prescription.</p>}
+        </div>
+      </section>
+
+      <section aria-labelledby="review-title" className="min-w-0 min-h-screen rounded-t-[30px] bg-white px-6 pb-12 pt-8 sm:px-10 lg:rounded-[30px] lg:px-[8.6%] lg:pt-[29px]">
+        <h1 id="review-title" className="mb-7 text-[28px] leading-[1.75] font-black text-teal sm:text-[32px] lg:mb-[18px] lg:text-[clamp(28px,2.778vw,40px)]">Extracted Information</h1>
+        <form noValidate onSubmit={event => { event.preventDefault(); handleConfirmVerification() }} aria-busy={saving}>
+          <fieldset disabled={disabled} className="min-w-0 space-y-[18px] disabled:opacity-70">
+            <legend className="sr-only">Review and edit the extracted prescription</legend>
+            <ReviewField id="patient_name" label="Patient’s Name" required value={record.patient_name} error={validationErrors.patient_name} onChange={e => handleFieldChange('patient_name', e.target.value)} />
+            <ReviewField id="physician_name" label="Doctor’s Name" required value={record.physician_name} error={validationErrors.physician_name} onChange={e => handleFieldChange('physician_name', e.target.value)} />
+
+            <div id="medications" tabIndex={-1} className="space-y-10 pt-[26px] outline-none">
+              <h2 className="sr-only">Prescribed medications</h2>
+              {validationErrors.medications && <p role="alert" className="text-sm text-rose-700">{validationErrors.medications}</p>}
+              {!record.medications.length && <p className="text-sm">No medications were extracted. Add a medication below to continue.</p>}
+              {(record.medications || []).map((med, idx) => {
+                const formularyMatch = lookupFormulary(med.medication_name || med.generic_name)
+                return (
+                <section key={med.id || idx} aria-label={`Medication ${idx + 1}`} className="space-y-[18px]">
+                  {med.flag_warning && (
+                    <p className="flex items-start gap-2 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-900" role="status">
+                      <AlertCircle aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />{med.flag_warning}
+                    </p>
+                  )}
+                  <ReviewField id={`med_${idx}_name`} label="Medicine" required value={med.medication_name} error={validationErrors[`med_${idx}_name`]} onChange={e => handleMedChange(idx, 'medication_name', e.target.value)} />
+                  <div>
+                    <ReviewField id={`med_${idx}_dosage`} label="Dosage" required value={med.dosage} error={validationErrors[`med_${idx}_dosage`]} onChange={e => handleMedChange(idx, 'dosage', e.target.value)} />
+                    {formularyMatch.found && formularyMatch.strengths?.length > 0 && (
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        <span className="text-xs font-semibold text-teal-deep/70">Standard Strengths:</span>
+                        {formularyMatch.strengths.map(strength => (
+                          <button
+                            key={strength}
+                            type="button"
+                            onClick={() => handleMedChange(idx, 'dosage', strength)}
+                            className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
+                              med.dosage?.trim() === strength
+                                ? 'bg-teal text-white shadow-sm'
+                                : 'bg-teal-light/60 text-teal-deep hover:bg-teal-border hover:text-white'
+                            }`}
+                          >
+                            {strength}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {!med.dosage?.trim() && formularyMatch.found && (
+                      <p className="mt-1 text-xs text-amber-800">Dosage not clearly detected — click a standard strength above or enter manually.</p>
+                    )}
+                  </div>
+                  <ReviewField id={`med_${idx}_frequency`} label="Frequency" multiline value={med.frequency} onChange={e => handleMedChange(idx, 'frequency', e.target.value)} />
+                  <ReviewDetails title={`Medication ${idx + 1} details`}>
+                    {med.confidence_score != null && <p className="text-sm">Extraction confidence: {formatConfidence(med.confidence_score)}</p>}
+                    {[
+                      ['generic_name', 'Generic Name'], ['duration', 'Duration'],
+                      ['route', 'Route'], ['instructions', 'Instructions'],
+                    ].map(([field, label]) => (
+                      <ReviewField key={field} id={`med_${idx}_${field}`} label={label} compact multiline={field === 'instructions'} value={med[field]} onChange={e => handleMedChange(idx, field, e.target.value)} />
+                    ))}
+                    <button type="button" onClick={() => handleRemoveMedication(idx)} aria-label={`Remove medication ${idx + 1}`} className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold text-rose-700 transition hover:bg-rose-50 focus-visible:outline-2 focus-visible:outline-teal">
+                      <Trash2 aria-hidden="true" className="h-4 w-4" />Remove medication
+                    </button>
+                  </ReviewDetails>
+                </section>
+                )
+              })}
+              <ReviewDetails title="Manage medications">
+                <button type="button" onClick={handleAddMedication} className="inline-flex items-center gap-2 rounded-lg bg-teal-light px-4 py-3 text-sm font-semibold transition hover:bg-teal-border focus-visible:outline-2 focus-visible:outline-teal">
+                  <Plus aria-hidden="true" className="h-4 w-4" />Add medication
+                </button>
+              </ReviewDetails>
+            </div>
+
+            <ReviewDetails title="Additional details">
+              <ReviewField id="date_issued" label="Date Issued" type="date" compact required value={record.date_issued} error={validationErrors.date_issued} onChange={e => handleFieldChange('date_issued', e.target.value)} />
+              <ReviewField id="patient_age" label="Age" type="number" compact min={0} value={record.patient_age} onChange={e => handleFieldChange('patient_age', e.target.value === '' ? null : Number(e.target.value))} />
+              <ReviewField id="patient_gender" label="Gender" compact options={['Male', 'Female', 'Other']} value={record.patient_gender} onChange={e => handleFieldChange('patient_gender', e.target.value)} />
+              {[
+                ['patient_address', 'Patient Address'], ['physician_license', 'PRC License / PTR No.'],
+                ['clinic_hospital', 'Clinic / Hospital'], ['notes', 'Notes & Instructions'],
+              ].map(([field, label]) => (
+                <ReviewField key={field} id={field} label={label} compact multiline={field === 'notes'} value={record[field]} onChange={e => handleFieldChange(field, e.target.value)} />
+              ))}
+            </ReviewDetails>
+
+            <ReviewDetails title="Review tools">
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="text-sm font-semibold">Image zoom</span>
+                <button type="button" aria-label="Zoom out" disabled={zoomLevel <= 0.75} onClick={() => setZoomLevel(z => Math.max(0.75, z - 0.25))} className="rounded-lg border border-teal-light p-2 disabled:opacity-40"><Minus aria-hidden="true" className="h-4 w-4" /></button>
+                <output className="min-w-12 text-center text-sm">{Math.round(zoomLevel * 100)}%</output>
+                <button type="button" aria-label="Zoom in" disabled={zoomLevel >= 2.5} onClick={() => setZoomLevel(z => Math.min(2.5, z + 0.25))} className="rounded-lg border border-teal-light p-2 disabled:opacity-40"><Plus aria-hidden="true" className="h-4 w-4" /></button>
+                <button type="button" onClick={() => setZoomLevel(1)} className="rounded-lg border border-teal-light px-2.5 py-1 text-xs font-semibold hover:bg-teal-light">Reset (100%)</button>
+              </div>
+              <p className="text-sm">OCR confidence: {formatConfidence(record.ocr_confidence)} · AI confidence: {formatConfidence(record.ai_confidence ?? record.ocr_confidence)}</p>
+              <p className="text-sm">{correctionsCount} {correctionsCount === 1 ? 'field change' : 'field changes'}</p>
+              <div className="flex flex-wrap gap-3">
+                <button type="button" onClick={() => exportToJSON(record)} className="inline-flex items-center gap-2 rounded-lg border border-teal-light px-4 py-3 text-sm font-semibold hover:bg-card-bg"><FileText aria-hidden="true" className="h-4 w-4" />JSON Export</button>
+                <button type="button" onClick={() => exportToPDF(record)} className="inline-flex items-center gap-2 rounded-lg border border-teal-light px-4 py-3 text-sm font-semibold hover:bg-card-bg"><Download aria-hidden="true" className="h-4 w-4" />PDF Export</button>
+              </div>
+            </ReviewDetails>
+          </fieldset>
+
+          {Object.keys(validationErrors).length > 0 && <p role="alert" className="mt-6 text-sm text-rose-700">Please complete the required fields before confirming.</p>}
+          {saveError && <p role="alert" className="mt-6 rounded-lg bg-rose-50 px-4 py-3 text-sm text-rose-700">{saveError}</p>}
+          {saveSuccess && (
+            <p role="status" className="mt-6 flex items-center gap-2 text-sm font-semibold text-teal-deep">
+              <CheckCircle2 aria-hidden="true" className="h-5 w-5 shrink-0" />Prescription saved. Redirecting to dashboard…
+            </p>
+          )}
+          <button type="submit" disabled={disabled} className="mx-auto mt-10 flex min-h-[62px] w-full max-w-[400px] items-center justify-center rounded-[10px] bg-teal px-6 py-3 text-xl font-bold text-white transition hover:bg-teal-deep focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-teal disabled:cursor-wait disabled:opacity-60 lg:text-[25px]">
+            {saving ? 'Saving…' : saveSuccess ? 'Confirmed' : 'Confirm'}
+          </button>
+        </form>
+      </section>
+    </main>
   )
 }

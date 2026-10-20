@@ -1,8 +1,9 @@
 
 import { useState, useEffect } from 'react'
-import { Upload, FileText, CircleUserRound, Settings, LogOut, Bell, Globe, Calendar, Clock } from 'lucide-react'
+import { Upload, FileText, CircleUserRound, Settings, LogOut, Bell, Globe, Calendar, Clock, Sparkles, CheckCircle2, AlertCircle, RefreshCw, Key, ShieldCheck, Cpu } from 'lucide-react'
 import logo from '../assets/logo.png'
 import { useAuth } from '../context/AuthContext.jsx'
+import { testGeminiConnection } from '../services/ocrService.js'
 
 const NAV_ITEMS = [
   { label: 'Upload', href: '/upload', icon: Upload, active: false },
@@ -14,6 +15,7 @@ const NAV_ITEMS = [
 const TABS = [
   { id: 'general', label: 'General', icon: Settings },
   { id: 'notifications', label: 'Notifications', icon: Bell },
+  { id: 'ai_ocr', label: 'AI & OCR Engine', icon: Sparkles },
 ]
 
 const LANGUAGE_OPTIONS = [
@@ -149,6 +151,32 @@ export default function SettingsPage() {
 
   const updateSetting = (key, value) => {
     setSettings((prev) => ({ ...prev, [key]: value }))
+  }
+
+  // Gemini API Key & Connection testing state
+  const [geminiKeyInput, setGeminiKeyInput] = useState(() => localStorage.getItem('mediseena_gemini_api_key') || '')
+  const [isTestingKey, setIsTestingKey] = useState(false)
+  const [testStatus, setTestStatus] = useState(null)
+  const [savedKeySuccess, setSavedKeySuccess] = useState(false)
+
+  const hasEnvKey = Boolean(import.meta.env.VITE_GEMINI_API_KEY && import.meta.env.VITE_GEMINI_API_KEY !== 'your-gemini-api-key')
+
+  const handleSaveKey = () => {
+    if (geminiKeyInput.trim()) {
+      localStorage.setItem('mediseena_gemini_api_key', geminiKeyInput.trim())
+    } else {
+      localStorage.removeItem('mediseena_gemini_api_key')
+    }
+    setSavedKeySuccess(true)
+    setTimeout(() => setSavedKeySuccess(false), 3000)
+  }
+
+  const handleTestConnection = async () => {
+    setIsTestingKey(true)
+    setTestStatus(null)
+    const res = await testGeminiConnection(geminiKeyInput)
+    setIsTestingKey(false)
+    setTestStatus(res)
   }
 
   return (
@@ -298,6 +326,141 @@ export default function SettingsPage() {
                   </svg>
                   <p className="text-[14px] font-normal text-teal-deep">
                     You can update your notification preferences anytime.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* AI & OCR Engine Tab */}
+            {activeTab === 'ai_ocr' && (
+              <div className="mt-8 space-y-6">
+                {/* Active Model Card */}
+                <div className="rounded-[16px] border-2 border-teal bg-teal-light/10 p-6 lg:p-8">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                    <div className="flex items-start gap-4">
+                      <div className="rounded-xl bg-teal-deep p-3 text-white">
+                        <Cpu className="h-7 w-7" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h3 className="text-[22px] font-bold text-teal-deep lg:text-[26px]">
+                            {testStatus?.success ? testStatus.model : 'Google Gemini 3.8 Flash'}
+                          </h3>
+                          <span className="rounded-full bg-emerald-100 px-3 py-0.5 text-xs font-semibold text-emerald-800 border border-emerald-300">
+                            {testStatus?.success ? 'Connection Verified' : 'Configured Model'}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-[15px] text-black/70">
+                          Multimodal Prescription Vision & Clinical Named Entity Recognition (NER)
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={handleTestConnection}
+                        disabled={isTestingKey}
+                        className="inline-flex items-center gap-2 rounded-[10px] bg-teal-deep px-5 py-3 text-[16px] font-semibold text-white shadow transition hover:bg-teal disabled:opacity-50"
+                      >
+                        <RefreshCw className={`h-4 w-4 ${isTestingKey ? 'animate-spin' : ''}`} />
+                        <span>{isTestingKey ? 'Testing...' : 'Test Connection'}</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Test Connection Results Badge */}
+                  {testStatus && (
+                    <div className={`mt-5 flex items-start gap-3 rounded-[12px] p-4 text-[15px] border ${
+                      testStatus.success
+                        ? 'border-emerald-300 bg-emerald-50 text-emerald-900'
+                        : 'border-rose-300 bg-rose-50 text-rose-900'
+                    }`}>
+                      {testStatus.success ? (
+                        <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-600 mt-0.5" />
+                      ) : (
+                        <AlertCircle className="h-5 w-5 shrink-0 text-rose-600 mt-0.5" />
+                      )}
+                      <div>
+                        <p className="font-semibold">
+                          {testStatus.success ? 'Model Connection Verified!' : 'Connection Check Failed'}
+                        </p>
+                        <p className="mt-0.5 text-sm">
+                          {testStatus.success
+                            ? `Successfully reached ${testStatus.model}. Connection check: ${testStatus.latencyMs}ms. Full prescription processing target: ≤ 10 seconds.`
+                            : testStatus.error}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Key KPIs targeted */}
+                  <div className="mt-6 grid grid-cols-1 sm:grid-cols-3 gap-4 border-t border-teal/20 pt-5">
+                    <div className="rounded-lg bg-white p-3 border border-teal/30">
+                      <span className="text-xs font-medium text-black/60 uppercase">Field Accuracy Target</span>
+                      <p className="text-[18px] font-bold text-teal-deep">≥ 85.0%</p>
+                    </div>
+                    <div className="rounded-lg bg-white p-3 border border-teal/30">
+                      <span className="text-xs font-medium text-black/60 uppercase">Target Processing Time</span>
+                      <p className="text-[18px] font-bold text-teal-deep">≤ 10.0 seconds</p>
+                    </div>
+                    <div className="rounded-lg bg-white p-3 border border-teal/30">
+                      <span className="text-xs font-medium text-black/60 uppercase">Verification Engine</span>
+                      <p className="text-[18px] font-bold text-teal-deep">Dual-Pane Pharmacist Review</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* API Key Configuration Card */}
+                <div className="rounded-[16px] border-2 border-teal bg-white p-6 lg:p-8 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="text-[20px] font-semibold text-black lg:text-[24px]">
+                        Gemini API Key
+                      </h3>
+                      <p className="text-[15px] text-black/70 mt-0.5">
+                        Configured for multimodal handwriting recognition & clinical field parsing.
+                      </p>
+                    </div>
+                    {hasEnvKey && (
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-teal-light/40 border border-teal px-3 py-1 text-xs font-semibold text-teal-deep">
+                        <ShieldCheck className="h-4 w-4" />
+                        Configured in .env
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex flex-col sm:flex-row gap-3">
+                    <div className="relative flex-1">
+                      <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-black/40">
+                        <Key className="h-5 w-5" />
+                      </div>
+                      <input
+                        type="password"
+                        value={geminiKeyInput}
+                        onChange={(e) => setGeminiKeyInput(e.target.value)}
+                        placeholder={hasEnvKey ? "Using key from .env (enter here to override)" : "Enter Gemini API Key (starts with AIza...)"}
+                        className="w-full rounded-[10px] border border-gray-300 bg-white py-3 pl-11 pr-4 text-[15px] focus:border-teal-deep focus:outline-none focus:ring-1 focus:ring-teal-deep"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleSaveKey}
+                      className="rounded-[10px] bg-teal px-6 py-3 font-semibold text-white transition hover:bg-teal-deep"
+                    >
+                      {savedKeySuccess ? 'Saved!' : 'Save Key'}
+                    </button>
+                  </div>
+
+                  {savedKeySuccess && (
+                    <p className="text-sm font-medium text-emerald-600 flex items-center gap-1.5">
+                      <CheckCircle2 className="h-4 w-4" />
+                      API key preference saved in this browser.
+                    </p>
+                  )}
+
+                  <p className="text-xs text-black/60">
+                    A saved override remains in this browser until cleared. The configured key authenticates Google Gemini Vision requests.
                   </p>
                 </div>
               </div>

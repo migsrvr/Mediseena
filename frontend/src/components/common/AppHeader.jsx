@@ -10,28 +10,22 @@ import {
   LayoutDashboard,
   Upload,
   FileCheck2,
-  FileText,
   BarChart3,
   LogOut,
-  UserCheck,
   ShieldAlert,
-  ChevronDown,
   Menu,
   X,
-  Stethoscope,
   Pill,
   User
 } from 'lucide-react'
 
 export default function AppHeader({ currentPath = '/dashboard' }) {
-  const { user, role, switchRole, logout } = useAuth()
-  const [roleMenuOpen, setRoleMenuOpen] = useState(false)
+  const { user, role, logout } = useAuth()
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
 
   const navLinks = [
     { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
     { label: 'Upload & Scan', href: '/upload', icon: Upload },
-    { label: 'Records', href: '/records', icon: FileText },
     { label: 'KPI Analytics', href: '/kpis', icon: BarChart3 },
   ]
 
@@ -82,67 +76,15 @@ export default function AppHeader({ currentPath = '/dashboard' }) {
           </nav>
         </div>
 
-        {/* Right side controls: Role Switcher & User Profile */}
+        {/* Right side controls: current role badge & user profile */}
         <div className="hidden md:flex items-center gap-3">
-          {/* Quick Role Switcher (Evaluation & Methodology Section 3.3) */}
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => setRoleMenuOpen(!roleMenuOpen)}
-              className={`flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold shadow-2xs transition hover:opacity-90 ${roleInfo.color}`}
-              title="Click to switch persona (Patient, Pharmacist, Admin)"
-            >
-              <RoleIcon className="h-3.5 w-3.5" />
-              <span>Role: {roleInfo.label}</span>
-              <ChevronDown className="h-3 w-3 opacity-70" />
-            </button>
-
-            {roleMenuOpen && (
-              <div className="absolute right-0 mt-2 w-56 rounded-2xl border border-slate-200 bg-white p-2 shadow-xl ring-1 ring-black/5 z-50">
-                <div className="px-3 py-1.5 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
-                  Switch Persona (Section 3.3)
-                </div>
-                <button
-                  type="button"
-                  onClick={() => { switchRole('patient'); setRoleMenuOpen(false) }}
-                  className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-xs font-medium text-left transition ${
-                    role === 'patient' ? 'bg-blue-50 text-blue-700 font-semibold' : 'text-slate-700 hover:bg-slate-50'
-                  }`}
-                >
-                  <User className="h-4 w-4 text-blue-600" />
-                  <div>
-                    <div className="font-bold">Patient</div>
-                    <div className="text-[10px] text-slate-400">Upload & view personal records</div>
-                  </div>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => { switchRole('pharmacist'); setRoleMenuOpen(false) }}
-                  className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-xs font-medium text-left transition ${
-                    role === 'pharmacist' ? 'bg-emerald-50 text-emerald-700 font-semibold' : 'text-slate-700 hover:bg-slate-50'
-                  }`}
-                >
-                  <Pill className="h-4 w-4 text-emerald-600" />
-                  <div>
-                    <div className="font-bold">Pharmacist / Health Worker</div>
-                    <div className="text-[10px] text-slate-400">Verify & correct OCR prescriptions</div>
-                  </div>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => { switchRole('admin'); setRoleMenuOpen(false) }}
-                  className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-xs font-medium text-left transition ${
-                    role === 'admin' ? 'bg-purple-50 text-purple-700 font-semibold' : 'text-slate-700 hover:bg-slate-50'
-                  }`}
-                >
-                  <ShieldAlert className="h-4 w-4 text-purple-600" />
-                  <div>
-                    <div className="font-bold">System Administrator</div>
-                    <div className="text-[10px] text-slate-400">KPIs, audit logs & system health</div>
-                  </div>
-                </button>
-              </div>
-            )}
+          {/* Current role badge (read-only, reflects the logged-in user) */}
+          <div
+            className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold shadow-2xs ${roleInfo.color}`}
+            title="Your current role"
+          >
+            <RoleIcon className="h-3.5 w-3.5" />
+            <span>{roleInfo.label}</span>
           </div>
 
           {/* User Profile display */}

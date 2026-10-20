@@ -13,12 +13,14 @@ import {
   Settings,
   LogOut,
   AlertCircle,
+  RotateCw,
 } from 'lucide-react'
 import logo from '../assets/logo.png'
 import rxIllustration from '../assets/upload/rx_illustration.png'
 import OcrProcessingView from '../components/upload/OcrProcessingView.jsx'
 import { validatePrescriptionFile } from '../utils/validators.js'
 import { processPrescriptionPipeline } from '../services/ocrService.js'
+import { loadImage, preprocessCanvas } from '../utils/imagePreprocessor.js'
 
 const NAV_ITEMS = [
   { label: 'Upload', href: '/upload', icon: Upload, active: true },
@@ -47,6 +49,12 @@ export default function UploadPrescription() {
   const [fileName, setFileName] = useState('')
   const [validationError, setValidationError] = useState('')
   const [isDragging, setIsDragging] = useState(false)
+  const [rotation, setRotation] = useState(0)
+
+  const isPdf = Boolean(
+    fileName?.toLowerCase().endsWith('.pdf') ||
+    (imagePreviewUrl && imagePreviewUrl.startsWith('data:application/pdf;'))
+  )
 
   // OCR Processing State
   const [isProcessingOCR, setIsProcessingOCR] = useState(false)
@@ -62,6 +70,7 @@ export default function UploadPrescription() {
     }
 
     setFileName(file.name)
+    setRotation(0)
 
     const reader = new FileReader()
     reader.onload = (e) => {
@@ -82,37 +91,55 @@ export default function UploadPrescription() {
     setImagePreviewUrl(null)
     setFileName('')
     setValidationError('')
+    setRotation(0)
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
-  const handleProceedToOCR = async (imageSource = imagePreviewUrl) => {
+  const handleProceedToOCR = async (imageSource = imagePreviewUrl, angle = (typeof rotation !== 'undefined' ? rotation : 0)) => {
     if (!imageSource) return
     setIsProcessingOCR(true)
     setIsPipelineComplete(false)
+    setValidationError('')
+    setOcrProgress({ status: 'Preparing prescription image...', progress: 0.08 })
+    const startTime = performance.now()
 
     try {
-      // Run Full OCR + Gemini Vision Pipeline
-      const result = await processPrescriptionPipeline(imageSource, (prog) => {
+      // Enhance raster images with the existing Canvas engine. PDFs go to vision directly.
+      let enhancedImage = imageSource
+      if (!imageSource.startsWith('data:application/pdf;')) {
+        setOcrProgress({ status: 'Enhancing prescription image with Canvas...', progress: 0.18 })
+        const processed = preprocessCanvas(await loadImage(imageSource), { rotation: angle })
+        if (!processed.readability.readable) throw new Error(processed.readability.message)
+        enhancedImage = processed.dataUrl
+        setOcrProgress({ status: 'Image noise reduced & contrast optimized.', progress: 0.30 })
+      } else {
+        setOcrProgress({ status: 'PDF document loaded & verified.', progress: 0.30 })
+      }
+      const result = await processPrescriptionPipeline(enhancedImage, (prog) => {
         setOcrProgress(prog)
       })
+      const totalProcessingTimeMs = Math.round(performance.now() - startTime)
 
       // Temporary record bundle to review
       const draftRecord = {
-        patient_name: result.structured?.patient?.name || 'Juan Dela Cruz',
-        patient_age: result.structured?.patient?.age || null,
-        patient_gender: result.structured?.patient?.gender || 'Male',
+        patient_name: result.structured?.patient?.name || '',
+        patient_age: result.structured?.patient?.age ?? null,
+        patient_gender: result.structured?.patient?.gender ?? null,
         patient_address: result.structured?.patient?.address || '',
-        physician_name: result.structured?.physician?.name || 'Dr. Attending Physician, MD',
-        physician_license: result.structured?.physician?.license || 'PRC-0142857',
-        clinic_hospital: result.structured?.physician?.clinic || 'Mediseena Partner Health Center',
-        date_issued: result.structured?.prescription?.date_issued || new Date().toISOString().split('T')[0],
+        physician_name: result.structured?.physician?.name || '',
+        physician_license: result.structured?.physician?.license || '',
+        clinic_hospital: result.structured?.physician?.clinic || '',
+        date_issued: result.structured?.prescription?.date_issued || '',
         source_image_url: imageSource,
-        raw_ocr_text: result.rawOcrText,
-        ocr_confidence: result.ocrConfidence || 88.0,
-        ai_confidence: result.structured?.overall_confidence || 91.0,
-        processing_time_ms: result.totalProcessingTimeMs,
+        raw_ocr_text: result.rawOcrText || '',
+        ocr_confidence: result.ocrConfidence ?? 0,
+        ai_confidence: result.structured?.overall_confidence ?? 0,
+        processing_time_ms: totalProcessingTimeMs,
         notes: result.structured?.prescription?.notes || '',
-        medications: result.structured?.medications || [],
+        medications: (result.structured?.medications || []).map((m, idx) => ({
+          ...m,
+          id: m.id || `med_${Date.now()}_${idx}`,
+        })),
       }
 
       // Store in sessionStorage for ReviewExtraction page
@@ -121,7 +148,7 @@ export default function UploadPrescription() {
         originalExtraction: JSON.parse(JSON.stringify(draftRecord)),
         meta: {
           edgeFunctionUsed: result.edgeFunctionUsed,
-          totalTimeMs: result.totalProcessingTimeMs,
+          totalTimeMs: totalProcessingTimeMs,
         }
       }))
 
@@ -205,28 +232,54 @@ export default function UploadPrescription() {
                 {imagePreviewUrl ? (
                   /* Figma Node 671:8266 — UPLOAD WITH PICTURE STATE */
                   <div className="relative flex h-full w-full items-center justify-center overflow-hidden">
-                    <img
-                      src={imagePreviewUrl}
-                      alt="Uploaded prescription"
-                      className="max-h-[500px] w-full rounded-[14px] object-contain"
-                    />
-
-                    {/* Change Upload button (Node 671:8273) */}
-                    <label className="absolute bottom-4 right-4 sm:bottom-6 sm:right-6 inline-flex h-[46px] w-[196px] cursor-pointer items-center justify-center gap-2 rounded-[10px] bg-teal px-4 text-[15px] font-semibold text-white shadow-md transition hover:bg-teal-deep">
-                      <Upload className="h-4 w-4" strokeWidth={2.5} />
-                      <span>Change Upload</span>
-                      <input
-                        ref={fileInputRef}
-                        type="file"
-                        accept="image/jpeg,image/png,image/webp,application/pdf"
-                        className="hidden"
-                        onChange={(e) => {
-                          if (e.target.files && e.target.files[0]) {
-                            handleFileSelection(e.target.files[0])
-                          }
-                        }}
+                    {isPdf ? (
+                      /* PDFs cannot render inside an <img>; show a document card instead */
+                      <div className="mb-20 flex max-w-md flex-col items-center justify-center gap-4 rounded-[14px] border border-teal-light bg-card-bg px-8 py-10 text-center sm:mb-16">
+                        <FileText aria-hidden="true" className="h-20 w-20 text-teal" />
+                        <p className="max-w-full break-all text-lg font-semibold text-teal-deep">
+                          {fileName || 'Prescription document'}
+                        </p>
+                        <span className="rounded-full bg-teal-light px-4 py-1.5 text-sm font-semibold text-teal-deep">
+                          PDF Document · Ready for AI Extraction
+                        </span>
+                      </div>
+                    ) : (
+                      <img
+                        src={imagePreviewUrl}
+                        alt="Uploaded prescription"
+                        className="max-h-[500px] w-full rounded-[14px] object-contain transition-transform duration-200"
+                        style={{ transform: `rotate(${rotation}deg)` }}
                       />
-                    </label>
+                    )}
+
+                    {/* Preview actions: rotate raster images & change upload (Node 671:8273) */}
+                    <div className="absolute bottom-4 right-4 flex flex-wrap items-center justify-end gap-3 sm:bottom-6 sm:right-6">
+                      {!isPdf && (
+                        <button
+                          type="button"
+                          onClick={() => setRotation(r => (r + 90) % 360)}
+                          className="inline-flex h-[46px] cursor-pointer items-center justify-center gap-2 rounded-[10px] bg-white border-2 border-teal px-4 text-[15px] font-semibold text-teal shadow-md transition hover:bg-teal-light"
+                        >
+                          <RotateCw className="h-4 w-4" />
+                          <span>Rotate 90°</span>
+                        </button>
+                      )}
+                      <label className="inline-flex h-[46px] w-[196px] cursor-pointer items-center justify-center gap-2 rounded-[10px] bg-teal px-4 text-[15px] font-semibold text-white shadow-md transition hover:bg-teal-deep">
+                        <Upload className="h-4 w-4" strokeWidth={2.5} />
+                        <span>Change Upload</span>
+                        <input
+                          ref={fileInputRef}
+                          type="file"
+                          accept="image/jpeg,image/png,image/webp,application/pdf"
+                          className="hidden"
+                          onChange={(e) => {
+                            if (e.target.files && e.target.files[0]) {
+                              handleFileSelection(e.target.files[0])
+                            }
+                          }}
+                        />
+                      </label>
+                    </div>
                   </div>
                 ) : (
                   /* Figma Node 671:8240 — EMPTY UPLOAD STATE */
@@ -301,6 +354,8 @@ export default function UploadPrescription() {
       {isProcessingOCR && (
         <OcrProcessingView
           isPipelineComplete={isPipelineComplete}
+          progress={ocrProgress.progress}
+          status={ocrProgress.status}
           onFinished={() => {
             window.location.href = '/review'
           }}

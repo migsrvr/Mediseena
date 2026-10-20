@@ -39,8 +39,16 @@ export default function KpiAnalytics() {
     async function loadData() {
       const kpiData = await kpiService.calculateKPIs()
       setKpis(kpiData)
-      setCorrections(prescriptionService.getCorrectionLogs())
-      setAuditLogs(prescriptionService.getAuditLogs())
+      try {
+        const [corrLogs, audLogs] = await Promise.all([
+          prescriptionService.getCorrectionLogs(),
+          prescriptionService.getAuditLogs()
+        ])
+        setCorrections(corrLogs || [])
+        setAuditLogs(audLogs || [])
+      } catch (err) {
+        console.warn('Failed to load logs:', err)
+      }
       setFeedbackList(kpiService.getFeedbackRatings())
     }
     loadData()

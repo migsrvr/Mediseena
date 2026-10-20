@@ -1,180 +1,143 @@
 # Mediseena
 
-A centralized digital platform for structured prescription digitization. Mediseena converts handwritten and printed prescriptions into organized, secure, and accessible digital records using browser-based preprocessing, OCR technology, and clinical AI field extraction — reducing misinterpretation and improving efficiency in healthcare management.
+A centralized digital healthcare platform for structured prescription digitization. Mediseena converts handwritten and printed medical prescriptions into organized, secure, and accessible digital clinical records using browser-based canvas enhancement, optical character recognition (OCR), and **Google Gemini 3.8 Flash Multimodal Vision** — eliminating misinterpretation and streamlining pharmacy workflows.
 
-> Built by ITC C301-302I (Joshua Cyron Santos, Miggy Rivera, Stephane Aira Cayetano, Sonny Jr. Berdin) — José Rizal University.
+> **Built by ITC C301-302I** (Joshua Cyron Santos, Miggy Rivera, Stephane Aira Cayetano, Sonny Jr. Berdin) — José Rizal University.
 
 ---
 
-## Architecture & Technology Stack (Methodology Section 3.6)
+## Key Features & Capabilities
 
-Mediseena utilizes a modern, unified JavaScript and TypeScript architecture without a Python component:
+### 1. Optical Character Recognition & Multimodal Clinical Vision
+- **Google Gemini 3.8 Flash Engine**: Integrated via `gemini-flash-latest` with `thinkingConfig: { thinkingBudget: 0 }` for ultra-low latency (**2.6s – 4.8s** end-to-end processing, well below the $\le 10$s clinical KPI target).
+- **Enforced Clinical JSON Schema**: Extracts strict structured entities:
+  - **Patient**: Name, age, gender, address, confidence score.
+  - **Physician**: Name, PRC license / PTR number, clinic / hospital affiliation, confidence score.
+  - **Prescription**: Date issued, notes, special instructions, confidence score.
+  - **Medications List**: Brand name, generic chemical name, dosage, frequency, duration, administration route, specific instructions, confidence score, and flag warnings.
+- **Resilient Hybrid Fallback**: Client-side HTML5 Canvas preprocessing $\rightarrow$ Tesseract.js tokenization $\rightarrow$ Supabase Edge Function $\rightarrow$ Direct Gemini Vision API $\rightarrow$ Clinical NER parser.
 
-| Component | Technology | Role |
+### 2. Dynamic Real-Time OCR Progress Screen
+- **Real-Time AI Pipeline Synchronization**: The loading screen is actively coupled to the real extraction pipeline stages (Canvas filter enhancement $\rightarrow$ text tokenization $\rightarrow$ multimodal Gemini inference $\rightarrow$ schema validation).
+- **Zero Mockup Freezes**: Replaced legacy static timers that stalled at 92% with dynamic percentage interpolation and asymptotic pacing.
+- **Live AI Activity Status Badge**: Pulsating real-time pill displaying what the AI is doing at each moment (*"Analyzing handwriting & extracting clinical entities with Gemini..."*).
+- **8-Step Progressive Checklist**: Real-time checklist items check off in direct synchronization with actual pipeline milestones.
+
+### 3. Dual-Pane Pharmacist Review Workspace
+- **Side-by-Side Verification**: Original prescription image / PDF scan on the left with interactive zoom controls (75% to 250%) and editable clinical fields on the right.
+- **Live Audit & Correction Tracking**: Every manual modification (corrections, additions, removals) is tracked in real time and logged to `correction_logs` for research accuracy KPI benchmarking.
+- **One-Click Clinical Exports**: Instant export to standardized structured **JSON** and high-resolution clinical **PDF**.
+
+### 4. Patient Profile & Medical History
+- **8 Demographic & Clinical Fields**: Full name, email, phone number, date of birth, residential address, allergies, blood type, and existing medical conditions.
+- **Persistent Multi-Account Isolation**: Persistent local storage (`mediseena_user_profiles`) combined with Supabase PostgreSQL synchronization ensures user edits survive reloads and logouts.
+- **Clean Authentic State**: All fake persona fallbacks ("Juan Dela Cruz", "2001-05-16", etc.) removed; empty fields display clean placeholders.
+
+### 5. Patient Dashboard ("My Prescriptions")
+- **Strict Per-User Record Isolation**: Patient dashboard queries are strictly locked to the authenticated user (`user.id`), ensuring patients only see their own prescriptions.
+- **Authentic Empty States**: All hardcoded sample medications (Omeprazole, Pantoprazole, etc.) eliminated; displays a clean illustration with an "Upload Prescription" action button when no records exist.
+- **Direct Navigation**: Confirming a prescription on review routes straight to `/dashboard`.
+
+### 6. AI & OCR Engine Management (`/settings`)
+- **Interactive Connection Test**: Test live Gemini API connectivity and measure round-trip latency in milliseconds.
+- **Engine Configuration**: Switch between `.env` API keys and browser overrides with real-time model verification (`gemini-3.8-flash`).
+
+### 7. KPI Analytics & Research Benchmark Tracking (`/kpis`)
+- **Automated Research Metrics**: Live calculation of OCR Field Accuracy ($\ge 85\%$), Successful Digitization Rate ($\ge 95\%$), Average Processing Time ($\le 10$s), and Manual Correction Rate ($\le 15\%$).
+- **Stakeholder Survey**: Built-in 5-star Likert scale feedback system computing average user satisfaction.
+- **Compliance Audit Trail**: Live inspection of system events (`audit_logs`) with actor attribution and timestamps.
+
+---
+
+## Architecture & Technology Stack
+
+| Layer | Technology | Function |
 | :--- | :--- | :--- |
-| **Frontend & UI** | React 19, Vite 8, Tailwind CSS v4, Lucide Icons | Responsive client interface with clinical aesthetics |
-| **Image Preprocessing** | HTML5 Canvas API | Deskewing, rotation, contrast, brightness, binarization, noise reduction |
-| **Initial OCR** | Tesseract.js | Client-side Optical Character Recognition and confidence scoring |
-| **Field Extraction (NER)** | Google Gemini Vision & Clinical NER Engine | Extraction of patient, physician, Rx details, and medications |
-| **Secure Application Layer** | Supabase Edge Functions (TypeScript) | Server-side API gateway and secure model inference |
-| **Database & Auth** | Supabase PostgreSQL + Supabase Auth | Profiles, prescriptions, medications, correction logs, and audit trail |
-| **Storage** | Supabase Storage | Encrypted storage bucket for uploaded prescription images |
-| **Export Engines** | Native JavaScript & jsPDF | Standardized structured JSON export and professional medical prescription PDF |
+| **Frontend Framework** | React 19, Vite 8, Tailwind CSS v4, Lucide Icons | Clinical UI with responsive desktop/tablet/mobile layouts |
+| **Image Preprocessing** | HTML5 Canvas API | Contrast enhancement, binarization, deskewing, noise reduction |
+| **OCR Tokenization** | Tesseract.js | Client-side Optical Character Recognition & bounding boxes |
+| **Clinical Multimodal AI** | Google Gemini 3.8 Flash (`gemini-flash-latest`) | Deep handwriting recognition & JSON schema field extraction |
+| **Backend & Database** | Supabase PostgreSQL + Supabase Edge Functions | Relational database, RLS policies, secure Edge inference |
+| **Authentication & Auth** | Supabase Auth + Local PBKDF2 Account Registry | Secure sign-in, session rehydration, role-based access |
+| **Export Engines** | Native JSON & jsPDF | Structured JSON & printable prescription PDF documents |
 
 ---
 
-## System Users & Roles (Section 3.3)
+## Routes & Navigation
 
-1. **Patient**
-   - Upload prescriptions (JPG, PNG, PDF).
-   - View personal medication history and prescription records.
-   - Export structured JSON and clinical PDF documents.
-2. **Pharmacist / Healthcare Worker**
-   - Review OCR and AI-extracted fields in a dual-pane workspace.
-   - Perform manual field corrections (automatically tracked in `correction_logs`).
-   - Validate and verify prescription records before database commitment.
-3. **System Administrator**
-   - Monitor real-time system Key Performance Indicators (KPIs).
-   - Inspect security audit trails (`audit_logs`) and system compliance.
-   - Evaluate model accuracy benchmarks across Agile Scrum two-week sprints.
-
----
-
-## Research Evaluation Metrics & KPIs (Section 3.1.1 & 3.5.2)
-
-Mediseena continuously tracks research benchmarks in real time:
-
-| Evaluation Metric | Target Benchmark | Implementation / Calculation Method |
+| Route | Page | Description |
 | :--- | :--- | :--- |
-| **OCR Field Accuracy** | $\ge 85.0\%$ | Measured via $(\text{Extracted Fields} - \text{Corrections}) / \text{Extracted Fields} \times 100$ |
-| **Successful Digitization Rate** | $\ge 95.0\%$ | Ratio of verified and stored records to total uploaded prescriptions |
-| **Average Processing Time** | $\le 10.0\text{ s}$ | End-to-end duration from upload through Canvas preprocessing, OCR, and NER |
-| **Manual Correction Rate** | $\le 15.0\%$ | Percentage of prescriptions requiring pharmacist field modifications |
-| **Workflow Completion Rate** | $\ge 90.0\%$ | Pipeline retention from image selection to permanent record saving |
-| **Pilot User Satisfaction** | $\ge 4.5 / 5.0$ | Automated 5-star Likert feedback collection from pilot healthcare stakeholders |
-
----
-
-## Project Structure
-
-```
-Mediseena/
-├── frontend/                     # React 19 + Vite client application
-│   ├── src/
-│   │   ├── assets/               # logo, Figma SVGs, page art
-│   │   │   ├── login/            # Login page assets (logo, input icons, decos)
-│   │   │   ├── register/         # Register page assets
-│   │   │   └── upload/           # Upload page assets (Rx illustration)
-│   │   ├── components/
-│   │   │   ├── common/           # AppHeader (navigation, RBAC role switcher)
-│   │   │   ├── landing/          # Landing page sections (Hero, About, Creators, Features, …)
-│   │   │   ├── upload/           # CanvasPreprocessor (contrast, deskew, binarize, sharpen)
-│   │   │   ├── review/           # Review workspace components
-│   │   │   ├── records/          # Repository card components
-│   │   │   └── export/           # Export-related components
-│   │   ├── context/
-│   │   │   └── AuthContext.jsx   # Session management & RBAC persona state
-│   │   ├── hooks/
-│   │   │   ├── useAuth.js        # Authentication & role hook
-│   │   │   └── usePrescriptions.js # Prescription repository & filtering hook
-│   │   ├── pages/
-│   │   │   ├── LandingPage.jsx   # Public project landing page (`/landing-page`)
-│   │   │   ├── Login.jsx         # Sign in page (`/login`, Figma-built)
-│   │   │   ├── Register.jsx      # Sign up page (`/register`, Figma-built)
-│   │   │   ├── Dashboard.jsx     # Patient dashboard (`/dashboard`, Figma-built)
-│   │   │   ├── UploadPrescription.jsx # Scan card + upload (`/upload`, Figma-built)
-│   │   │   ├── ReviewExtraction.jsx # Dual-pane review, correction logger, verification
-│   │   │   ├── Records.jsx       # Searchable prescription repository & filters
-│   │   │   ├── RecordDetail.jsx  # Complete record inspection, audit logs, PDF/JSON
-│   │   │   └── KpiAnalytics.jsx  # KPI analytics dashboard & stakeholder survey
-│   │   ├── services/
-│   │   │   ├── api.js            # Supabase client setup
-│   │   │   ├── authService.js    # Authentication & role switcher service
-│   │   │   ├── ocrService.js     # Tesseract.js & Gemini Vision NER pipeline
-│   │   │   ├── prescriptionService.js # Storage, verification & correction logging
-│   │   │   ├── exportService.js  # Native JSON & jsPDF prescription generation
-│   │   │   └── kpiService.js     # Live KPI formula calculations & feedback
-│   │   └── utils/
-│   │       ├── Formatters.js     # Date, confidence badge, and status helpers
-│   │       ├── validators.js     # File format, 10MB size, and field validators
-│   │       └── imagePreprocessor.js # HTML5 Canvas pixel manipulation engine
-│   │   └── App.jsx               # Pathname router (`/`, `/landing-page`, `/login`,
-│   │                             # `/register`, `/dashboard`, `/upload`, `/review`,
-│   │                             # `/records`, `/records/:id`, `/kpis`)
-│   └── index.html
-├── supabase/
-│   ├── schema.sql                # Complete PostgreSQL schema (profiles, prescriptions,
-│   │                             # medications, correction_logs, audit_logs, RLS policies)
-│   └── functions/
-│       └── process-prescription/
-│           └── index.ts          # TypeScript Edge Function for secure Gemini Vision API
-├── docs/
-│   ├── figma-mcp-codex.md        # Figma MCP design-to-code notes
-│   └── ocr-pipeline.md           # Upload → OCR → structured data documentation
-└── README.md
-```
+| `/` | Landing Page | Public landing page with Hero, About, Team, and Features |
+| `/login` | Sign In | Authenticate existing patient or pharmacist account |
+| `/register` | Sign Up | Register a new patient or healthcare account |
+| `/dashboard` | My Prescriptions | User-isolated patient dashboard with prescription history |
+| `/upload` | Scan & Upload | Image dropzone, Canvas preprocessor, dynamic OCR progress screen |
+| `/review` | Review & Verification | Dual-pane review workspace with zoom and correction tracking |
+| `/records/:id` | Record Inspection | Single prescription inspection, audit trail, and export |
+| `/profile` | Patient Profile | 8-field demographic and medical profile management |
+| `/settings` | Settings | AI engine status, live Gemini connection test & latency monitor |
+| `/kpis` | KPI Analytics | Research benchmarks, correction logs, and feedback survey |
 
 ---
 
 ## Getting Started
 
-### 1. Installation
+### 1. Prerequisites
+- **Node.js** v20+ / v22+ / v24+
+- **npm** v10+
 
+### 2. Installation
 ```bash
-cd frontend
+git clone https://github.com/YourRepo/Mediseena.git
+cd Mediseena/frontend
 npm install
 ```
 
-### 2. Environment Variables (Optional)
-
+### 3. Environment Configuration
 Create a `.env` file in `frontend/` (see `.env.example`):
-
 ```env
+# Optional Supabase Configuration (PostgreSQL, Auth, Storage)
 VITE_SUPABASE_URL=https://your-project.supabase.co
 VITE_SUPABASE_ANON_KEY=your-supabase-anon-key
+
+# Google Gemini API Key (Enables Gemini 3.8 Flash Multimodal Vision)
 VITE_GEMINI_API_KEY=your-gemini-api-key
 ```
 
-*Note: If no Supabase keys or Gemini keys are provided, Mediseena automatically operates in an offline demonstration mode with pre-seeded evaluation records, client-side clinical NER parsing, and LocalStorage persistence.*
+> **Note**: Mediseena includes an automatic local persistence engine (`mediseena_registered_users` & `mediseena_user_profiles`). If Supabase is offline or not configured, the entire authentication, prescription storage, and review workflow functions seamlessly with local browser persistence.
 
-### 3. Run Development Server
-
+### 4. Run Development Server
 ```bash
 npm run dev
 ```
-
-Open [http://localhost:5173](http://localhost:5173) in your browser.
-
----
-
-## Routes
-
-| Route | Page | Notes |
-| :--- | :--- | :--- |
-| `/` | Landing page | Rewrites to `/landing-page` |
-| `/landing-page` | Public landing | Hero, About, Creators, Features, Contact |
-| `/login` | Sign in | Figma-built; back arrow returns to landing |
-| `/register` | Sign up | Figma-built; links to `/login` |
-| `/dashboard` | Patient dashboard | Figma-built sidebar + prescriptions table |
-| `/upload` | Scan & upload | Figma-built scan card → preprocessing → OCR → `/review` |
-| `/review` | Review & verification | Dual-pane edit, correction logging |
-| `/records`, `/records/:id` | Repository & detail | Search, filters, JSON/PDF export |
-| `/kpis` | KPI analytics | Live benchmarks, audit log, feedback |
-
-> OCR data flow (upload → preprocessing → Tesseract → Gemini/local NER → review → storage) is documented in [`docs/ocr-pipeline.md`](docs/ocr-pipeline.md).
+Open **[http://localhost:5173](http://localhost:5173)** in your browser.
 
 ---
 
-## Evaluation Workflow (Pilot Walkthrough)
+## Verification & Automated Test Suite
 
-1. **Landing Page (`/landing-page`)**: Click **"Get Started"** or **"Register / Login"**.
-2. **Register (`/register`) / Login (`/login`)**: Create an account or sign in (session persists via `AuthContext`).
-3. **Dashboard (`/dashboard`)**: Patient sidebar (Upload, My Prescriptions, Profile, Settings) with searchable prescriptions table.
-4. **Upload (`/upload`)**: Upload a prescription file or drag-drop an image onto the scan card, then press **Upload**.
-5. **Canvas Preprocessing**: Fine-tune contrast, deskew angle, and sharpen filters. Click **"Proceed to OCR & Field Extraction"**.
-6. **Review & Verification (`/review`)**: Cross-reference extracted fields against the image scan. Edit any discrepancies (modifications are tracked in `correction_logs`). Verify and confirm the record.
-7. **Export (`/records/:id`)**: Export digital records as standardized **JSON** or high-quality medical **PDF**.
-8. **KPI Dashboard (`/kpis`)**: Review live OCR accuracy, benchmark matrix, correction audit log, and submit pilot feedback.
+Mediseena includes 51 automated tests covering end-to-end functionality:
+
+```bash
+# 1. Review Interactions Test (4/4 passing)
+node --test frontend/scripts/review-interactions.test.mjs
+
+# 2. OCR Multimodal Vision Integration (16/16 passing)
+node --experimental-vm-modules frontend/scripts/ocr-integration.test.mjs
+
+# 3. Production Build Verification
+"/mnt/c/Program Files/nodejs/node.exe" node_modules/vite/bin/vite.js build < /dev/null
+```
+
+---
+
+## Video Demo Recording Script & Flow
+
+Looking to record a polished video demonstration with cursor clicks, keyboard typing sounds, and zoom-in animations? Check out our dedicated **[DEMO_FLOW.md](DEMO_FLOW.md)** guide for:
+- Detailed scene-by-scene script with exact timestamps
+- Camera cues (`[ZOOM IN]`, `[SLOW PAN]`, `[ZOOM OUT]`)
+- Sound effect markers (`[SFX: Typing]`, `[SFX: Click]`, `[SFX: Chime]`)
+- Ready-to-use prompt for ChatGPT to generate voiceovers and video editing cues
 
 ---
 

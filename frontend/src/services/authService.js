@@ -1,289 +1,256 @@
-// ==============================================================================
-// MEDISEENA AUTHENTICATION SERVICE
-// Section 3.3 & 3.9.1: RBAC (Patient, Pharmacist, Admin), Session Management,
-// Supabase Auth with offline mock demonstration profiles
-// ==============================================================================
-
+// Account authentication and per-user profile persistence, with an explicit local account fallback.
 import { supabase, isLiveSupabaseConfigured } from './api.js'
 
-export const DEMO_USERS = {
-  patient: {
-    id: 'usr_pat_001',
-    email: 'juan.delacruz@gmail.com',
-    full_name: 'Juan Dela Cruz',
-    role: 'patient',
-    phone_number: '+63 9123456789',
-    date_of_birth: '2001-05-16',
-    address: 'Metro Manila, Philippines',
-    allergies: 'None',
-    blood_type: 'AB',
-    conditions: 'None',
-    avatar_url: null,
-  },
-  pharmacist: {
-    id: 'usr_phr_002',
-    email: 'pharmacist@mediseena.ph',
-    full_name: 'Stephane Aira Cayetano, RPh',
-    role: 'pharmacist',
-    license_number: 'PRC-RPH-0089214',
-    organization: 'Mediseena Central Pharmacy',
-    phone_number: '+63 920 987 6543',
-    avatar_url: null,
-  },
-  admin: {
-    id: 'usr_adm_003',
-    email: 'admin@mediseena.ph',
-    full_name: 'Miggy Rivera',
-    role: 'admin',
-    organization: 'José Rizal University ITC C301-302I',
-    phone_number: '+63 918 555 1234',
-    avatar_url: null,
-  }
+const SESSION_KEY = 'mediseena_auth_session'
+const PROFILES_KEY = 'mediseena_user_profiles'
+const ACCOUNTS_KEY = 'mediseena_registered_users'
+const SIGNED_OUT_KEY = 'mediseena_signed_out'
+const UUID_PATTERN = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i
+const profileFields = ['full_name', 'phone_number', 'avatar_url', 'date_of_birth', 'address',
+  'allergies', 'blood_type', 'conditions', 'organization', 'license_number']
+const defaultProfile = { phone_number: '', avatar_url: null, date_of_birth: '', address: '',
+  allergies: 'None', blood_type: 'None', conditions: 'None' }
+
+function readJSON(storage, key, fallback) {
+  try { return JSON.parse(storage.getItem(key) || 'null') ?? fallback } catch { return fallback }
 }
 
-const SESSION_STORAGE_KEY = 'mediseena_auth_session'
+function accounts() {
+  const stored = readJSON(localStorage, ACCOUNTS_KEY, [])
+  return Array.isArray(stored) ? stored : Object.values(stored || {})
+}
+
+function profiles() {
+  const stored = readJSON(localStorage, PROFILES_KEY, {})
+  return stored && typeof stored === 'object' && !Array.isArray(stored) ? stored : {}
+}
+
+function editableFields(source = {}) {
+  return Object.fromEntries(profileFields.filter(field => Object.hasOwn(source, field) && source[field] !== undefined)
+    .map(field => [field, source[field]]))
+}
+
+function publicUser(account) {
+  if (!account?.id) return null
+  const { password, password_hash, password_salt, ...user } = account
+  return user
+}
+
+function hydrate(user) {
+  if (!user?.id) return null
+  return { ...defaultProfile, ...publicUser(user), ...editableFields(profiles()[user.id] || {}) }
+}
+
+function activeSession() {
+  // A session-only sign-in in this tab takes precedence over a remembered sign-in.
+  const temporary = readJSON(sessionStorage, SESSION_KEY, null)
+  const remembered = readJSON(localStorage, SESSION_KEY, null)
+  return temporary?.id ? temporary : remembered?.id ? remembered : null
+}
+
+function saveProfile(userId, updates) {
+  const stored = profiles()
+  stored[userId] = { ...editableFields(stored[userId]), ...editableFields(updates) }
+  localStorage.setItem(PROFILES_KEY, JSON.stringify(stored))
+}
+
+function saveSession(user, remember = true) {
+  const previous = activeSession()
+  if (previous?.id && previous.id !== user.id) sessionStorage.removeItem('mediseena_pending_review')
+  localStorage.removeItem(SESSION_KEY)
+  sessionStorage.removeItem(SESSION_KEY)
+  localStorage.removeItem(SIGNED_OUT_KEY)
+  const hydrated = hydrate(user)
+  ;(remember ? localStorage : sessionStorage).setItem(SESSION_KEY, JSON.stringify(hydrated))
+  return hydrated
+}
+
+function persistActive(user) {
+  const remembered = localStorage.getItem(SESSION_KEY) !== null
+  const temporary = sessionStorage.getItem(SESSION_KEY) !== null
+  if (remembered) localStorage.setItem(SESSION_KEY, JSON.stringify(user))
+  if (temporary) sessionStorage.setItem(SESSION_KEY, JSON.stringify(user))
+  if (!remembered && !temporary) localStorage.setItem(SESSION_KEY, JSON.stringify(user))
+}
+
+function unavailable(error) {
+  return error?.status >= 500 || error?.status === 0 ||
+    ['TypeError', 'AuthRetryableFetchError', 'TimeoutError', 'AbortError'].includes(error?.name) ||
+    /fetch|network|offline|unavailable|timeout|ECONN|ENOTFOUND|EAI_AGAIN/i.test(error?.message || '')
+}
+
+const hex = bytes => Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('')
+const unhex = value => Uint8Array.from(value.match(/.{2}/g) || [], byte => parseInt(byte, 16))
+async function passwordDigest(password, salt, iterations) {
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits'])
+  const result = await crypto.subtle.deriveBits({ name: 'PBKDF2', salt, iterations, hash: 'SHA-256' }, key, 256)
+  return hex(new Uint8Array(result))
+}
+
+async function storedPassword(password) {
+  const salt = crypto.getRandomValues(new Uint8Array(16))
+  const iterations = 100000
+  return { algorithm: 'PBKDF2-SHA256', salt: hex(salt), iterations, digest: await passwordDigest(password, salt, iterations) }
+}
+
+async function passwordMatches(password, stored) {
+  // Permit a successful legacy local credential to be upgraded on its next login.
+  if (typeof stored === 'string') return password === stored
+  if (stored?.algorithm !== 'PBKDF2-SHA256' || !/^[0-9a-f]{32}$/i.test(stored.salt || '') ||
+      !Number.isInteger(stored.iterations) || stored.iterations < 100000 || stored.iterations > 1000000) return false
+  return await passwordDigest(password, unhex(stored.salt), stored.iterations) === stored.digest
+}
+
+async function remoteProfile(id) {
+  try {
+    const { data, error } = await supabase.from('profiles').select('*').eq('id', id).single()
+    return error ? null : data
+  } catch { return null }
+}
+
+function remoteUser(user, profile, previous) {
+  const sameUser = previous?.id === user.id ? previous : {}
+  return hydrate({ ...defaultProfile, ...editableFields(sameUser), ...editableFields(profile || {}),
+    id: user.id, email: user.email,
+    full_name: profile?.full_name || sameUser.full_name || user.user_metadata?.full_name || user.email?.split('@')[0] || '',
+    // Only the profile table or a previously authenticated session supplies a role.
+    role: profile?.role || sameUser.role || 'patient', isLive: true,
+  })
+}
+
+function profileDbPayload(profile) {
+  return Object.fromEntries(profileFields.map(field => [field, profile[field] === '' ? null : profile[field] ?? null]))
+}
 
 export const authService = {
-  /**
-   * Retrieves the current authenticated session & profile
-   */
   async getSession() {
+    if (localStorage.getItem(SIGNED_OUT_KEY) === 'true') return { user: null, role: 'patient', isLive: false }
+    const cached = activeSession()
+    const localAccount = cached && accounts().find(account => account.id === cached.id)
+    if (localAccount) {
+      const user = hydrate({ ...publicUser(localAccount), ...publicUser(cached), isLive: false })
+      persistActive(user)
+      return { user, role: user.role || 'patient', isLive: false }
+    }
     if (isLiveSupabaseConfigured) {
       try {
-        const { data: { session }, error } = await supabase.auth.getSession()
-        if (session && !error) {
-          const { data: profile } = await supabase
-            .from('profiles')
-            .select('*')
-            .eq('id', session.user.id)
-            .single()
-
-          return {
-            user: { ...session.user, ...profile },
-            role: profile?.role || 'patient',
-            isLive: true,
-          }
+        const { data, error } = await supabase.auth.getSession()
+        if (!error && data?.session?.user) {
+          const raw = data.session.user
+          const user = remoteUser(raw, await remoteProfile(raw.id), cached)
+          persistActive(user)
+          return { user, role: user.role, isLive: true }
         }
-      } catch (e) {
-        console.warn('Supabase session fetch failed, falling back to local session:', e)
-      }
+      } catch { /* An existing authenticated session and profile remain usable offline. */ }
     }
-
-    // Local / Demo Session
-    const local = localStorage.getItem(SESSION_STORAGE_KEY) || sessionStorage.getItem(SESSION_STORAGE_KEY)
-    if (local) {
-      try {
-        const parsed = JSON.parse(local)
-        return { user: parsed, role: parsed.role || 'patient', isLive: false }
-      } catch (_) {}
+    if (cached && UUID_PATTERN.test(cached.id)) {
+      const user = hydrate(cached)
+      persistActive(user)
+      return { user, role: user.role || 'patient', isLive: false }
     }
-
-    // Default demo user for seamless evaluation if none exists
-    const defaultUser = DEMO_USERS.pharmacist
-    return { user: defaultUser, role: defaultUser.role, isLive: false }
+    // Legacy fabricated demo sessions do not create an authenticated account.
+    localStorage.removeItem(SESSION_KEY)
+    sessionStorage.removeItem(SESSION_KEY)
+    return { user: null, role: 'patient', isLive: false }
   },
 
-  /**
-   * Sign In
-   */
   async login(email, password, remember = true) {
+    const normalizedEmail = String(email || '').trim().toLowerCase()
+    if (!normalizedEmail || !password) throw new Error('Email and password are required.')
+    const registered = accounts()
+    const local = registered.find(account => String(account.email).trim().toLowerCase() === normalizedEmail)
+    if (local) {
+      if (!await passwordMatches(password, local.password)) throw new Error('Invalid email or password.')
+      if (typeof local.password === 'string') {
+        local.password = await storedPassword(password)
+        localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(registered))
+      }
+      return saveSession({ ...publicUser(local), isLive: false }, remember)
+    }
     if (isLiveSupabaseConfigured) {
       try {
-        const { data, error } = await supabase.auth.signInWithPassword({ email, password })
+        const { data, error } = await supabase.auth.signInWithPassword({ email: normalizedEmail, password })
         if (error) throw error
-
-        if (data?.user) {
-          let profile = null
-          try {
-            const { data: profData } = await supabase
-              .from('profiles')
-              .select('*')
-              .eq('id', data.user.id)
-              .single()
-            profile = profData
-          } catch (_) {}
-
-          // Ensure profile row exists in public.profiles table
-          if (!profile) {
-            try {
-              const newProf = {
-                id: data.user.id,
-                email: data.user.email,
-                full_name: data.user.user_metadata?.full_name || email.split('@')[0],
-                role: data.user.user_metadata?.role || 'patient',
-                license_number: data.user.user_metadata?.license_number || null,
-              }
-              const { data: upserted } = await supabase
-                .from('profiles')
-                .upsert(newProf)
-                .select()
-                .single()
-              if (upserted) profile = upserted
-            } catch (_) {}
-          }
-
-          const userObj = {
-            id: data.user.id,
-            email: data.user.email,
-            full_name: profile?.full_name || data.user.user_metadata?.full_name || email.split('@')[0],
-            role: profile?.role || data.user.user_metadata?.role || 'patient',
-            license_number: profile?.license_number || data.user.user_metadata?.license_number || '',
-            isLive: true,
-          }
-
-          const storage = remember ? localStorage : sessionStorage
-          storage.setItem(SESSION_STORAGE_KEY, JSON.stringify(userObj))
-          return userObj
-        }
-      } catch (err) {
-        // If it matches a recognized demo persona, allow smooth fallback without blocking testing/evaluation
-        const matchedDemo = Object.values(DEMO_USERS).find(u => u.email.toLowerCase() === email.toLowerCase())
-        if (matchedDemo) {
-          console.info('Live Supabase account not found for demo user; falling back to demo session:', email)
-          const storage = remember ? localStorage : sessionStorage
-          storage.setItem(SESSION_STORAGE_KEY, JSON.stringify(matchedDemo))
-          return matchedDemo
-        }
-        throw err
+        if (!data?.user) throw new Error('Authentication service is unavailable.')
+        const profile = await remoteProfile(data.user.id)
+        return saveSession(remoteUser(data.user, profile, activeSession()), remember)
+      } catch (error) {
+        if (!unavailable(error)) throw error
+        throw new Error('Sign-in is unavailable and no local account matches this email. Register a local account to continue offline.')
       }
     }
-
-    // Match demo accounts or create local session
-    let matched = Object.values(DEMO_USERS).find(u => u.email.toLowerCase() === email.toLowerCase())
-    if (!matched) {
-      matched = {
-        id: `usr_${Date.now()}`,
-        email,
-        full_name: email.split('@')[0],
-        role: 'patient',
-        created_at: new Date().toISOString(),
-      }
-    }
-
-    const storage = remember ? localStorage : sessionStorage
-    storage.setItem(SESSION_STORAGE_KEY, JSON.stringify(matched))
-    return matched
+    throw new Error('Invalid email or password. Register an account before signing in.')
   },
 
-  /**
-   * Register a new user with chosen role
-   */
   async register({ email, name, password, role = 'patient', licenseNumber = '' }) {
+    const normalizedEmail = String(email || '').trim().toLowerCase()
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail) || !String(name || '').trim() || typeof password !== 'string' || password.length < 6) {
+      throw new Error('A valid email, full name, and password of at least six characters are required.')
+    }
+    if (!['patient', 'pharmacist'].includes(role)) throw new Error('Choose a supported registration role.')
+    if (accounts().some(account => String(account.email).trim().toLowerCase() === normalizedEmail)) {
+      throw new Error('An account with this email is already registered.')
+    }
     if (isLiveSupabaseConfigured) {
-      const { data, error } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          data: { full_name: name, role, license_number: licenseNumber }
-        }
-      })
-      if (error) throw error
-
-      if (data?.user) {
-        // If session is active (email confirmation disabled), ensure public.profiles record is created
-        if (data.session) {
-          try {
-            await supabase.from('profiles').upsert({
-              id: data.user.id,
-              email: data.user.email,
-              full_name: name,
-              role,
-              license_number: licenseNumber || null,
-            })
-          } catch (_) {}
-        }
-        const userObj = {
-          id: data.user.id,
-          email: data.user.email,
-          full_name: name,
-          role,
-          license_number: licenseNumber,
-          needsEmailConfirmation: !data.session,
-          registeredAt: new Date().toISOString(),
-        }
-        if (data.session) {
-          localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(userObj))
-        }
-        return userObj
+      try {
+        const { data, error } = await supabase.auth.signUp({ email: normalizedEmail, password,
+          options: { data: { full_name: name.trim(), license_number: licenseNumber || null } } })
+        if (error) throw error
+        if (!data?.user) throw new Error('Registration service is unavailable.')
+        const profile = data.session ? await remoteProfile(data.user.id) : null
+        const user = remoteUser(data.user, profile, null)
+        saveProfile(user.id, { full_name: user.full_name })
+        if (data.session) return saveSession(user)
+        return { ...user, needsEmailConfirmation: true }
+      } catch (error) {
+        if (!unavailable(error)) throw error
       }
     }
-
-    const newUser = {
-      id: `usr_${Date.now()}`,
-      email,
-      full_name: name,
-      role,
-      license_number: licenseNumber,
-      registeredAt: new Date().toISOString(),
+    const credential = await storedPassword(password)
+    // Recheck after asynchronous hashing to avoid duplicate concurrent registrations in this tab.
+    const registered = accounts()
+    if (registered.some(account => String(account.email).trim().toLowerCase() === normalizedEmail)) {
+      throw new Error('An account with this email is already registered.')
     }
-
-    localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(newUser))
-    return newUser
+    const user = { ...defaultProfile, id: `local_${crypto.randomUUID()}`, email: normalizedEmail,
+      full_name: name.trim(), role, license_number: licenseNumber, isLive: false,
+      registeredAt: new Date().toISOString() }
+    localStorage.setItem(ACCOUNTS_KEY, JSON.stringify([...registered, { ...user, password: credential }]))
+    saveProfile(user.id, user)
+    return saveSession(user)
   },
 
-  /**
-   * Quick role switch (ideal for presentation / evaluation of all 3 roles)
-   */
   switchRole(targetRole) {
-    const roleKey = targetRole.toLowerCase()
-    const targetUser = DEMO_USERS[roleKey] || DEMO_USERS.patient
-    localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(targetUser))
-    return targetUser
+    const user = hydrate(activeSession())
+    if (!user) throw new Error('Sign in before changing account settings.')
+    if (targetRole !== user.role) throw new Error('Role changes require an administrator.')
+    return user
   },
 
-  /**
-   * Persist profile edits (demo session + live profiles when configured)
-   */
-  async updateProfile(updates) {
-    const storedLocal = localStorage.getItem(SESSION_STORAGE_KEY)
-    const storedSession = sessionStorage.getItem(SESSION_STORAGE_KEY)
-    let current = {}
-    try {
-      current = JSON.parse(storedLocal || storedSession || '{}')
-    } catch (_) {}
-
-    if (!current?.id) {
-      const session = await this.getSession()
-      current = session?.user || {}
-    }
-
-    const updated = { ...current, ...updates }
-
-    if (isLiveSupabaseConfigured && updated.id && !String(updated.id).startsWith('usr_')) {
+  async updateProfile(updates = {}) {
+    const current = activeSession() || (await this.getSession()).user
+    if (!current?.id) throw new Error('Sign in before updating your profile.')
+    saveProfile(current.id, updates)
+    const updated = hydrate(current)
+    persistActive(updated)
+    if (isLiveSupabaseConfigured && UUID_PATTERN.test(current.id)) {
       try {
-        await supabase
-          .from('profiles')
-          .update({
-            full_name: updated.full_name,
-            phone_number: updated.phone_number || null,
-            avatar_url: updated.avatar_url || null,
-          })
-          .eq('id', updated.id)
-      } catch (err) {
-        console.warn('Live profile update failed; keeping local copy:', err)
-      }
+        const { error } = await supabase.from('profiles').update(profileDbPayload(updated)).eq('id', current.id)
+        if (error) throw error
+      } catch { console.warn('Profile saved in this browser; remote profile update is unavailable.') }
     }
-
-    if (storedSession && !storedLocal) {
-      sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(updated))
-    } else {
-      localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(updated))
-    }
-
-    return updated
+    // A slower remote request must not restore a different user or an earlier edit.
+    return hydrate(activeSession())
   },
 
-  /**
-   * Sign out
-   */
   async logout() {
+    localStorage.setItem(SIGNED_OUT_KEY, 'true')
+    localStorage.removeItem(SESSION_KEY)
+    sessionStorage.removeItem(SESSION_KEY)
+    sessionStorage.removeItem('mediseena_pending_review')
     if (isLiveSupabaseConfigured) {
-      try {
-        await supabase.auth.signOut()
-      } catch (_) {}
+      try { await supabase.auth.signOut() } catch { /* Local sign-out remains effective offline. */ }
     }
-    localStorage.removeItem(SESSION_STORAGE_KEY)
-    sessionStorage.removeItem(SESSION_STORAGE_KEY)
     return true
-  }
+  },
 }

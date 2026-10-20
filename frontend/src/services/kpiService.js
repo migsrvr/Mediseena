@@ -27,7 +27,16 @@ export const kpiService = {
    */
   async calculateKPIs() {
     const prescriptions = await prescriptionService.getPrescriptions({ status: 'all' })
-    const corrections = prescriptionService.getCorrectionLogs()
+
+    // Consume correction logs defensively: corrupted/absent storage must never break KPIs
+    let corrections = []
+    try {
+      corrections = (await prescriptionService.getCorrectionLogs()) || []
+    } catch (err) {
+      console.warn('Failed to read correction logs for KPIs:', err)
+    }
+    if (!Array.isArray(corrections)) corrections = []
+
     const feedbackList = this.getFeedbackRatings()
 
     const total = prescriptions.length
@@ -39,7 +48,7 @@ export const kpiService = {
         avgProcessingTimeSec: 3.8,
         manualCorrectionRate: 12.0,
         workflowCompletionRate: 94.0,
-        userSatisfaction: 4.8,
+        userSatisfaction: this.getAverageSatisfactionRating() ?? 4.8,
         totalCorrections: 0,
         verifiedCount: 0,
         pendingCount: 0,
@@ -91,10 +100,8 @@ export const kpiService = {
       ? Math.round(((verifiedList.length + (pendingList.length * 0.8)) / total) * 1000) / 10
       : 92.0
 
-    // 6. User Satisfaction (Average from survey feedback)
-    const avgRating = feedbackList.length > 0
-      ? Math.round((feedbackList.reduce((acc, f) => acc + f.rating, 0) / feedbackList.length) * 10) / 10
-      : 4.8
+    // 6. User Satisfaction (average of stored survey feedback)
+    const avgRating = this.getAverageSatisfactionRating() ?? 4.8
 
     return {
       totalPrescriptions: total,
@@ -128,13 +135,18 @@ export const kpiService = {
   },
 
   /**
-   * Submit pilot feedback rating
+   * Submit pilot feedback rating (persisted to localStorage)
    */
   submitFeedback({ rating, comment, role = 'pharmacist' }) {
+    const numericRating = Number(rating)
+    if (!Number.isFinite(numericRating) || numericRating < 1 || numericRating > 5) {
+      throw new Error('Feedback rating must be a number between 1 and 5.')
+    }
+
     const feedbackList = this.getFeedbackRatings()
     const item = {
-      id: `fb_${Date.now()}`,
-      rating: Number(rating),
+      id: `fb_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      rating: numericRating,
       comment: comment?.trim() || '',
       role,
       submittedAt: new Date().toISOString()
@@ -145,12 +157,27 @@ export const kpiService = {
   },
 
   /**
+   * Average satisfaction rating across all stored feedback (1 decimal).
+   * Returns null when no feedback has been recorded.
+   */
+  getAverageSatisfactionRating() {
+    const feedbackList = this.getFeedbackRatings()
+    const rated = feedbackList.filter(f => Number.isFinite(Number(f.rating)))
+    if (rated.length === 0) return null
+    const total = rated.reduce((acc, f) => acc + Number(f.rating), 0)
+    return Math.round((total / rated.length) * 10) / 10
+  },
+
+  /**
    * Get feedback ratings
    */
   getFeedbackRatings() {
     const local = localStorage.getItem(LOCAL_FEEDBACK_KEY)
     if (local) {
-      try { return JSON.parse(local) } catch (_) {}
+      try {
+        const parsed = JSON.parse(local)
+        if (Array.isArray(parsed)) return parsed
+      } catch (_) {}
     }
     // Pre-seed some default feedback from pilot testing
     const defaultFeedback = [

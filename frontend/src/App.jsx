@@ -12,7 +12,6 @@ import Profile from './pages/Profile.jsx'
 import Settings from './pages/Settings.jsx'
 import UploadPrescription from './pages/UploadPrescription.jsx'
 import ReviewExtraction from './pages/ReviewExtraction.jsx'
-import Records from './pages/Records.jsx'
 import RecordDetail from './pages/RecordDetail.jsx'
 import KpiAnalytics from './pages/KpiAnalytics.jsx'
 import LogoutPage from './pages/LogoutPage.jsx'
@@ -62,7 +61,7 @@ function MainRoutes() {
   if (path === '/settings') return <Settings />
   if (path === '/upload') return <UploadPrescription />
   if (path === '/review') return <ReviewExtraction />
-  if (path === '/records') return <Records />
+  if (path === '/records') return <Dashboard />
   if (path.startsWith('/records/')) {
     const recordId = path.split('/')[2]
     return <RecordDetail recordId={recordId} />

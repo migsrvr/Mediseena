@@ -1,9 +1,11 @@
 // ==============================================================================
 // MEDISEENA OCR PROCESSING VIEW
 // Figma Node 671:8292 (OCR PROCESSING) & Node 671:8298 (OCR PROCESSING COMPLETE)
-// Features:
-// - 0% to 100% animated circular percentage counter
-// - 8-step progressive checklist checking off in sequence
+// Dynamic Progress & AI Stage Coordination:
+// - Real-time progress driven by Canvas enhancement, Tesseract & Gemini AI stages
+// - Dynamic percentage ring with asymptotic pacing during deep inference (no 92% freeze)
+// - Live AI activity banner displaying real pipeline status
+// - 8-step progressive checklist checking off in sync with extraction milestones
 // - "Process Complete" celebration state before proceeding to review
 // ==============================================================================
 
@@ -12,56 +14,70 @@ import { Check } from 'lucide-react'
 
 // Checkpoint thresholds for the 8 steps
 const CHECKLIST_LEFT = [
-  { id: 'ocr_engine', label: 'Preparing OCR Engine', threshold: 12 },
-  { id: 'enhance_img', label: 'Enhancing Prescription Image', threshold: 25 },
-  { id: 'reduce_noise', label: 'Reducing Image Noise', threshold: 38 },
-  { id: 'save_record', label: 'Saving Prescription Record', threshold: 100 },
+  { id: 'ocr_engine', label: 'Preparing OCR Engine', threshold: 10 },
+  { id: 'enhance_img', label: 'Enhancing Prescription Image', threshold: 20 },
+  { id: 'reduce_noise', label: 'Reducing Image Noise', threshold: 30 },
+  { id: 'save_record', label: 'Saving Prescription Record', threshold: 95 },
 ]
 
 const CHECKLIST_RIGHT = [
-  { id: 'detect_handwritten', label: 'Detecting Handwritten Text', threshold: 50 },
-  { id: 'recognize_meds', label: 'Recognizing Medicine Names', threshold: 63 },
+  { id: 'detect_handwritten', label: 'Detecting Handwritten Text', threshold: 45 },
+  { id: 'recognize_meds', label: 'Recognizing Medicine Names', threshold: 60 },
   { id: 'id_dosage', label: 'Identifying Dosage and Frequency', threshold: 75 },
   { id: 'verify_info', label: 'Verifying Medicine Information', threshold: 88 },
 ]
 
-export default function OcrProcessingView({ isPipelineComplete, onFinished }) {
-  const [displayPercent, setDisplayPercent] = useState(0)
+export default function OcrProcessingView({
+  isPipelineComplete = false,
+  progress = 0,
+  status = '',
+  onFinished,
+}) {
+  const [displayPercent, setDisplayPercent] = useState(8)
   const [showCompleteState, setShowCompleteState] = useState(false)
   const finishedRef = useRef(false)
+  const tickRef = useRef(0)
 
-  // Smooth percentage counter timer
+  // Dynamic progress interpolation driven by real AI pipeline stages
   useEffect(() => {
+    const rawTarget = isPipelineComplete
+      ? 100
+      : Math.max(8, Math.min(99, Math.round((progress || 0) * 100)))
+
     const timer = setInterval(() => {
+      tickRef.current++
       setDisplayPercent((prev) => {
-        // If pipeline is not yet done, crawl up to 92% smoothly
-        if (!isPipelineComplete) {
-          if (prev < 92) {
-            // Gentle natural increment
-            const inc = prev < 40 ? 2 : prev < 75 ? 1 : Math.random() > 0.4 ? 1 : 0
-            return Math.min(prev + inc, 92)
-          }
-          return prev
+        // When pipeline is fully complete, swiftly accelerate to 100%
+        if (isPipelineComplete) {
+          if (prev < 100) return prev + Math.max(1, Math.ceil((100 - prev) / 3))
+          return 100
         }
 
-        // Once pipeline is complete, quickly count up to 100%
-        if (prev < 100) {
-          return prev + 2
+        // Catch up to current target stage smoothly
+        if (prev < rawTarget) {
+          const step = Math.max(1, Math.ceil((rawTarget - prev) / 5))
+          return Math.min(prev + step, rawTarget)
         }
 
-        return 100
+        // While awaiting remote Gemini AI inference (50% - 88%), gently pulse forward
+        // so the user sees continuous, active progress and never a frozen counter
+        if (prev < 88 && tickRef.current % 4 === 0) {
+          return prev + 1
+        }
+
+        return prev
       })
-    }, 70)
+    }, 60)
 
     return () => clearInterval(timer)
-  }, [isPipelineComplete])
+  }, [progress, isPipelineComplete])
 
   // Transition to "OCR PROCESSING COMPLETE" (Node 671:8298) when reaching 100%
   useEffect(() => {
     if (displayPercent >= 100 && isPipelineComplete && !showCompleteState) {
       const completeTimer = setTimeout(() => {
         setShowCompleteState(true)
-      }, 350)
+      }, 300)
       return () => clearTimeout(completeTimer)
     }
   }, [displayPercent, isPipelineComplete, showCompleteState])
@@ -72,7 +88,7 @@ export default function OcrProcessingView({ isPipelineComplete, onFinished }) {
       const redirectTimer = setTimeout(() => {
         finishedRef.current = true
         if (onFinished) onFinished()
-      }, 1200)
+      }, 1100)
       return () => clearTimeout(redirectTimer)
     }
   }, [showCompleteState, onFinished])
@@ -135,8 +151,8 @@ export default function OcrProcessingView({ isPipelineComplete, onFinished }) {
           Please wait a while we extract the information
         </p>
 
-        {/* Figma Node 671:8295 / 244:1431 — Loading Bar with dynamic 0% - 100% */}
-        <div className="relative my-8 flex h-[130px] w-[130px] items-center justify-center sm:my-10">
+        {/* Dynamic circular percentage ring */}
+        <div className="relative my-6 flex h-[130px] w-[130px] items-center justify-center sm:my-8">
           <svg className="h-[130px] w-[130px] -rotate-90" viewBox="0 0 130 130">
             {/* Background ring */}
             <circle
@@ -158,15 +174,24 @@ export default function OcrProcessingView({ isPipelineComplete, onFinished }) {
               strokeDasharray={circumference}
               strokeDashoffset={strokeOffset}
               strokeLinecap="round"
-              className="transition-all duration-150 ease-out"
+              className="transition-all duration-100 ease-out"
             />
           </svg>
 
           {/* Center percent readout */}
-          <div className="absolute flex items-baseline justify-center font-['Poppins:Bold'] text-[18px] font-bold text-[#8f8f8f] sm:text-[20px]">
+          <div className="absolute flex items-baseline justify-center font-['Poppins:Bold'] text-[20px] font-bold text-slate-800 sm:text-[22px]">
             <span>{displayPercent}</span>
-            <span className="text-[14px] sm:text-[15px]">%</span>
+            <span className="text-[14px] sm:text-[15px] font-semibold text-teal-deep">%</span>
           </div>
+        </div>
+
+        {/* Dynamic AI Status Badge */}
+        <div className="mb-8 flex items-center justify-center gap-2.5 rounded-full border border-teal/20 bg-teal/5 px-5 py-2 text-[14px] font-semibold text-teal-deep sm:text-[16px] shadow-2xs">
+          <span className="relative flex h-2.5 w-2.5 shrink-0">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-teal opacity-75"></span>
+            <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-teal"></span>
+          </span>
+          <span className="truncate max-w-[500px]">{status || 'Analyzing prescription with AI...'}</span>
         </div>
 
         {/* Two-column Progress Checklists (Figma Node 671:8296 & 671:8297) */}
@@ -180,15 +205,15 @@ export default function OcrProcessingView({ isPipelineComplete, onFinished }) {
                   <div
                     className={`flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-[4px] border-2 transition-all duration-300 ${
                       isChecked
-                        ? 'border-[#60aba8] bg-[#60aba8] text-white shadow-xs'
-                        : 'border-[#60aba8] bg-transparent text-transparent'
+                        ? 'border-[#60aba8] bg-[#60aba8] text-white shadow-xs scale-100'
+                        : 'border-[#60aba8] bg-transparent text-transparent scale-95'
                     }`}
                   >
                     <Check className="h-3.5 w-3.5 stroke-[3.5]" />
                   </div>
                   <span
                     className={`text-[16px] sm:text-[18px] lg:text-[20px] transition-colors duration-200 ${
-                      isChecked ? 'font-medium text-black' : 'font-normal text-slate-700'
+                      isChecked ? 'font-medium text-black' : 'font-normal text-slate-500'
                     }`}
                   >
                     {item.label}
@@ -207,15 +232,15 @@ export default function OcrProcessingView({ isPipelineComplete, onFinished }) {
                   <div
                     className={`flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-[4px] border-2 transition-all duration-300 ${
                       isChecked
-                        ? 'border-[#60aba8] bg-[#60aba8] text-white shadow-xs'
-                        : 'border-[#60aba8] bg-transparent text-transparent'
+                        ? 'border-[#60aba8] bg-[#60aba8] text-white shadow-xs scale-100'
+                        : 'border-[#60aba8] bg-transparent text-transparent scale-95'
                     }`}
                   >
                     <Check className="h-3.5 w-3.5 stroke-[3.5]" />
                   </div>
                   <span
                     className={`text-[16px] sm:text-[18px] lg:text-[20px] transition-colors duration-200 ${
-                      isChecked ? 'font-medium text-black' : 'font-normal text-slate-700'
+                      isChecked ? 'font-medium text-black' : 'font-normal text-slate-500'
                     }`}
                   >
                     {item.label}

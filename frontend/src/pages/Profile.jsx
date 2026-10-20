@@ -1,10 +1,11 @@
 // ==============================================================================
 // MEDISEENA PATIENT PROFILE
 // Figma: PROFILE PAGE 671:7997 — sidebar + identity card + medical summary.
-// Fields bind to the authenticated user; Figma sample values fill any gaps.
+// Fields bind reactively to the authenticated user; empty fields show
+// placeholders instead of mock values.
 // ==============================================================================
 
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Upload, FileText, CircleUserRound, Settings, LogOut } from 'lucide-react'
 import logo from '../assets/logo.png'
 import defaultAvatar from '../assets/profile/avatar.svg'
@@ -20,15 +21,21 @@ import cameraIcon from '../assets/profile/camera.svg'
 import { useAuth } from '../context/AuthContext.jsx'
 import { formatDate } from '../utils/Formatters.js'
 
-const FIGMA_DEFAULTS = {
-  full_name: 'Juan Dela Cruz',
-  email: 'juan.delacruz@gmail.com',
-  phone_number: '+63 9123456789',
-  date_of_birth: '2001-05-16',
-  address: 'Metro Manila, Philippines',
-  allergies: 'None',
-  blood_type: 'AB',
-  conditions: 'None',
+const PLACEHOLDER_CLASS = 'text-[#bab4b4]'
+
+function toProfileForm(user) {
+  return {
+    full_name: user?.full_name || '',
+    email: user?.email || '',
+    phone_number: user?.phone_number || '',
+    date_of_birth: user?.date_of_birth || '',
+    address: user?.address || '',
+    allergies: user?.allergies || '',
+    blood_type: user?.blood_type || '',
+    conditions: user?.conditions || '',
+    avatar_url: user?.avatar_url || '',
+    role: user?.role || 'patient',
+  }
 }
 
 const NAV_ITEMS = [
@@ -67,16 +74,18 @@ function FieldRow({ icon, alt, editing, value, onChange, type = 'text', placehol
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder}
-          className="w-full max-w-[280px] rounded-md border border-teal/40 bg-white px-2 py-0.5 text-[14px] font-normal text-black focus:border-teal-deep focus:outline-none"
+          className="w-full max-w-[280px] rounded-md border border-teal/40 bg-white px-2 py-0.5 text-[14px] font-normal text-black placeholder:text-[#bab4b4] focus:border-teal-deep focus:outline-none"
         />
       ) : (
-        <span className="text-[14px] font-normal text-black">{value || placeholder}</span>
+        <span className="text-[14px] font-normal text-black">
+          {value || <span className={PLACEHOLDER_CLASS}>{placeholder}</span>}
+        </span>
       )}
     </div>
   )
 }
 
-function SummaryChip({ icon, iconBg, title, value, editing, onChange }) {
+function SummaryChip({ icon, iconBg, title, value, editing, onChange, placeholder }) {
   return (
     <div className="flex min-h-[56px] flex-1 items-center gap-3 rounded-[15px] border-[0.5px] border-teal bg-[#F4F4F4] px-3 py-2 sm:px-4">
       {iconBg ? (
@@ -93,10 +102,13 @@ function SummaryChip({ icon, iconBg, title, value, editing, onChange }) {
             type="text"
             value={value}
             onChange={(e) => onChange(e.target.value)}
-            className="w-full bg-transparent text-[15px] font-normal text-black focus:outline-none"
+            placeholder={placeholder}
+            className="w-full bg-transparent text-[15px] font-normal text-black placeholder:text-[#bab4b4] focus:outline-none"
           />
         ) : (
-          <p className="text-[15px] font-normal text-black">{value}</p>
+          <p className="text-[15px] font-normal text-black">
+            {value || <span className={PLACEHOLDER_CLASS}>{placeholder}</span>}
+          </p>
         )}
       </div>
     </div>
@@ -106,35 +118,29 @@ function SummaryChip({ icon, iconBg, title, value, editing, onChange }) {
 export default function Profile() {
   const { user, logout, updateProfile } = useAuth()
   const photoInputRef = useRef(null)
+  const noticeTimerRef = useRef(null)
+  const [form, setForm] = useState(() => toProfileForm(user))
   const [editing, setEditing] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
 
-  const seed = useMemo(
-    () => ({
-      full_name: user?.full_name || FIGMA_DEFAULTS.full_name,
-      email: user?.email || FIGMA_DEFAULTS.email,
-      phone_number: user?.phone_number || FIGMA_DEFAULTS.phone_number,
-      date_of_birth: user?.date_of_birth || FIGMA_DEFAULTS.date_of_birth,
-      address: user?.address || FIGMA_DEFAULTS.address,
-      allergies: user?.allergies || FIGMA_DEFAULTS.allergies,
-      blood_type: user?.blood_type || FIGMA_DEFAULTS.blood_type,
-      conditions: user?.conditions || FIGMA_DEFAULTS.conditions,
-      avatar_url: user?.avatar_url || '',
-      role: user?.role || 'patient',
-    }),
-    [user],
-  )
+  // Reactively populate the form with the real session user: fills in as the
+  // session finishes loading asynchronously, and re-syncs whenever it updates.
+  // While the user is editing, in-progress edits are never clobbered.
+  useEffect(() => {
+    if (!editing) setForm(toProfileForm(user))
+  }, [user, editing])
 
-  const [form, setForm] = useState(seed)
-  const display = editing ? form : seed
+  const display = form
   const avatarSrc = display.avatar_url || defaultAvatar
 
   const setField = (key) => (value) => setForm((prev) => ({ ...prev, [key]: value }))
 
   const startEdit = () => {
-    setForm(seed)
+    setForm(toProfileForm(user))
     setError('')
+    setNotice('')
     setEditing(true)
   }
 
@@ -171,6 +177,9 @@ export default function Profile() {
         avatar_url: form.avatar_url,
       })
       setEditing(false)
+      setNotice('Profile saved successfully.')
+      window.clearTimeout(noticeTimerRef.current)
+      noticeTimerRef.current = window.setTimeout(() => setNotice(''), 4000)
     } catch (err) {
       setError(err.message || 'Could not save profile.')
     } finally {
@@ -250,7 +259,7 @@ export default function Profile() {
                   <button
                     type="button"
                     onClick={() => {
-                      setForm(seed)
+                      setForm(toProfileForm(user))
                       setEditing(false)
                       setError('')
                     }}
@@ -282,6 +291,9 @@ export default function Profile() {
             {error && (
               <p className="mt-3 text-[14px] font-medium text-rose-600">{error}</p>
             )}
+            {!error && notice && (
+              <p role="status" className="mt-3 text-[14px] font-medium text-emerald-600">{notice}</p>
+            )}
 
             <div className="mt-6 rounded-[15px] border-4 border-teal-light bg-white px-4 py-6 sm:px-6 lg:px-5 lg:py-7">
               <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
@@ -289,7 +301,7 @@ export default function Profile() {
                   <div className="relative h-[189px] w-[189px] shrink-0">
                     <img
                       src={avatarSrc}
-                      alt={`${display.full_name} avatar`}
+                      alt={display.full_name ? `${display.full_name} avatar` : 'Profile avatar'}
                       className="h-full w-full rounded-full bg-white object-cover"
                     />
                     <button
@@ -317,11 +329,12 @@ export default function Profile() {
                         type="text"
                         value={form.full_name}
                         onChange={(e) => setField('full_name')(e.target.value)}
-                        className="w-full max-w-[360px] border-b border-teal bg-transparent text-[28px] font-semibold text-black focus:outline-none lg:text-[36px]"
+                        placeholder="Enter your name"
+                        className="w-full max-w-[360px] border-b border-teal bg-transparent text-[28px] font-semibold text-black placeholder:text-[#bab4b4] focus:outline-none lg:text-[36px]"
                       />
                     ) : (
                       <h3 className="text-[28px] font-semibold leading-tight text-black lg:text-[36px]">
-                        {display.full_name}
+                        {display.full_name || <span className={PLACEHOLDER_CLASS}>Enter your name</span>}
                       </h3>
                     )}
 
@@ -332,6 +345,7 @@ export default function Profile() {
                         value={display.email}
                         onChange={setField('email')}
                         type="email"
+                        placeholder="Enter email"
                       />
                       <FieldRow
                         icon={phoneIcon}
@@ -339,6 +353,7 @@ export default function Profile() {
                         value={display.phone_number}
                         onChange={setField('phone_number')}
                         type="tel"
+                        placeholder="Enter phone number"
                       />
                       <FieldRow
                         icon={calendarIcon}
@@ -346,16 +361,20 @@ export default function Profile() {
                         value={
                           editing
                             ? form.date_of_birth
-                            : formatDate(display.date_of_birth)
+                            : form.date_of_birth
+                              ? formatDate(form.date_of_birth)
+                              : ''
                         }
                         onChange={setField('date_of_birth')}
                         type={editing ? 'date' : 'text'}
+                        placeholder="Enter date of birth"
                       />
                       <FieldRow
                         icon={locationIcon}
                         editing={editing}
                         value={display.address}
                         onChange={setField('address')}
+                        placeholder="Enter address"
                       />
                     </div>
                   </div>
@@ -379,6 +398,7 @@ export default function Profile() {
                     value={display.allergies}
                     editing={editing}
                     onChange={setField('allergies')}
+                    placeholder="Enter allergies"
                   />
                   <SummaryChip
                     icon={bloodIcon}
@@ -387,6 +407,7 @@ export default function Profile() {
                     value={display.blood_type}
                     editing={editing}
                     onChange={setField('blood_type')}
+                    placeholder="Enter blood type"
                   />
                   <SummaryChip
                     icon={conditionsIcon}
@@ -395,6 +416,7 @@ export default function Profile() {
                     value={display.conditions}
                     editing={editing}
                     onChange={setField('conditions')}
+                    placeholder="Enter conditions"
                   />
                 </div>
               </div>
