@@ -392,10 +392,11 @@ const prescriptionResponseSchema = objectSchema({
   overall_confidence: scoreSchema,
 })
 
+// Production keys live only in the Edge Function secrets; VITE_* values would be bundled publicly.
 function resolveGeminiKey(apiKey) {
   let storedKey = ''
   try { storedKey = localStorage.getItem('mediseena_gemini_api_key') || '' } catch { /* Browser storage may be disabled. */ }
-  const key = (apiKey || storedKey || import.meta.env.VITE_GEMINI_API_KEY || '').trim().replace(/[\r\n\t]/g, '')
+  const key = (apiKey || storedKey || '').trim().replace(/[\r\n\t]/g, '')
   return key === 'your-gemini-api-key' ? '' : key
 }
 

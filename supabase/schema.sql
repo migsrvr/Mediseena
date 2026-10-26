@@ -200,7 +200,7 @@ CREATE OR REPLACE FUNCTION public.get_current_user_role()
 RETURNS public.user_role AS $$
     SELECT role FROM public.profiles WHERE id = auth.uid();
 $$ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '';
-REVOKE ALL ON FUNCTION public.get_current_user_role() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.get_current_user_role() FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.get_current_user_role() TO authenticated;
 
 CREATE OR REPLACE FUNCTION public.protect_profile_role()

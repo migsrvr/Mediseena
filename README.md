@@ -40,7 +40,7 @@ A centralized digital healthcare platform for structured prescription digitizati
 
 ### 6. AI & OCR Engine Management (`/settings`)
 - **Interactive Connection Test**: Test live Gemini API connectivity and measure round-trip latency in milliseconds.
-- **Engine Configuration**: Switch between `.env` API keys and browser overrides with real-time model verification (`gemini-3.8-flash`).
+- **Engine Configuration**: Production extraction uses the server-side Edge Function key; an optional browser override key can be tested with real-time model verification (`gemini-3.8-flash`).
 
 ### 7. KPI Analytics & Research Benchmark Tracking (`/kpis`)
 - **Automated Research Metrics**: Live calculation of OCR Field Accuracy ($\ge 85\%$), Successful Digitization Rate ($\ge 95\%$), Average Processing Time ($\le 10$s), and Manual Correction Rate ($\le 15\%$).
@@ -99,10 +99,9 @@ Create a `.env` file in `frontend/` (see `.env.example`):
 # Optional Supabase Configuration (PostgreSQL, Auth, Storage)
 VITE_SUPABASE_URL=https://your-project.supabase.co
 VITE_SUPABASE_ANON_KEY=your-supabase-anon-key
-
-# Google Gemini API Key (Enables Gemini 3.8 Flash Multimodal Vision)
-VITE_GEMINI_API_KEY=your-gemini-api-key
 ```
+
+> **Security**: Never put the Gemini API key in a `VITE_*` variable. Vite bundles those into the public JavaScript. The key is a Supabase Edge Function secret (see [Deployment](#deployment)). For local testing without the Edge Function, you can paste a key into **Settings → AI & OCR Engine** as a browser-only override.
 
 > **Note**: Mediseena includes an automatic local persistence engine (`mediseena_registered_users` & `mediseena_user_profiles`). If Supabase is offline or not configured, the entire authentication, prescription storage, and review workflow functions seamlessly with local browser persistence.
 
@@ -126,8 +125,33 @@ node --test frontend/scripts/review-interactions.test.mjs
 node --experimental-vm-modules frontend/scripts/ocr-integration.test.mjs
 
 # 3. Production Build Verification
-"/mnt/c/Program Files/nodejs/node.exe" node_modules/vite/bin/vite.js build < /dev/null
+cd frontend && npm run build
 ```
+
+---
+
+## Deployment
+
+The frontend is a static Vite SPA hosted on **Vercel**. Gemini runs server-side in the **Supabase Edge Function** `process-prescription`, which only accepts signed-in users.
+
+### 1. Supabase
+1. Run `supabase/schema.sql` in the Supabase SQL editor (safe to re-run).
+2. Deploy the Edge Function with the Gemini key as a secret:
+   ```bash
+   supabase login
+   supabase link --project-ref <your-project-ref>
+   supabase secrets set GEMINI_API_KEY=<your-gemini-api-key>
+   # Optional: restrict CORS to your production domain
+   supabase secrets set ALLOWED_ORIGIN=https://<your-app>.vercel.app
+   supabase functions deploy process-prescription
+   ```
+3. **Authentication → URL Configuration**: set **Site URL** to `https://<your-app>.vercel.app` and add it (plus `https://*-<your-team>.vercel.app/**` for previews) to **Redirect URLs** so email-confirmation links open the deployed app.
+
+### 2. Vercel
+1. Import the GitHub repository.
+2. **Root Directory**: `frontend`. Framework preset **Vite** (build `npm run build`, output `dist`).
+3. **Environment Variables** (Production and Preview): `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` only.
+4. Deploy. `frontend/vercel.json` rewrites every route to `index.html`, so deep links such as `/dashboard` and `/records/:id` survive a refresh.
 
 ---
 

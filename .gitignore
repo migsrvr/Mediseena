@@ -82,3 +82,6 @@ Desktop.ini
 *.sln
 *.sw?.cursor/
 mcp.json
+
+# ---- Supabase CLI ----
+supabase/.temp/

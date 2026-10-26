@@ -7,8 +7,9 @@ import { fileURLToPath } from 'node:url'
 const root = fileURLToPath(new URL('../../', import.meta.url)).replace(/[\\/]$/, '')
 const fixture = { patient: { name: 'Synthetic Patient', age: 0, gender: null, address: '', confidence: 0 }, physician: { name: 'Dr. Synthetic', license: '', clinic: '', confidence: 0 }, prescription: { date_issued: '', notes: '', confidence: 0 }, medications: [{ id: 'm1', medication_name: 'Synthetic Medicine', generic_name: '', dosage: '', frequency: '', duration: '', route: '', instructions: '', confidence_score: 0, flag_warning: 'Unclear' }], overall_confidence: 0 }
 const success = (data = fixture) => new Response(JSON.stringify({ modelVersion: 'gemini-3.8-flash', candidates: [{ content: { parts: [{ thought: true, text: 'ignore this thought' }, { text: JSON.stringify(data) }] }, finishReason: 'STOP' }] }), { status: 200 })
-async function loadService({ fetch = async () => success(), createWorker = async () => { throw new Error('Worker network unavailable') }, supabase = null, env = { VITE_GEMINI_API_KEY: 'test-key' }, timers = {} } = {}) {
-  const context = vm.createContext({ fetch, console: { warn() {}, error() {} }, performance, setTimeout, clearTimeout, AbortController, AbortSignal, Blob, FileReader: class {}, localStorage: { getItem: () => null }, Response, ...timers })
+async function loadService({ fetch = async () => success(), createWorker = async () => { throw new Error('Worker network unavailable') }, supabase = null, env = {}, storedKey = 'test-key', timers = {} } = {}) {
+  const localStorage = { getItem: key => key === 'mediseena_gemini_api_key' ? storedKey : null }
+  const context = vm.createContext({ fetch, console: { warn() {}, error() {} }, performance, setTimeout, clearTimeout, AbortController, AbortSignal, Blob, FileReader: class {}, localStorage, Response, ...timers })
   const mod = new vm.SourceTextModule(fs.readFileSync(`${root}/frontend/src/services/ocrService.js`, 'utf8'), { context, initializeImportMeta(meta) { meta.env = env } })
   await mod.link(async specifier => {
     if (specifier === './clinicalFormulary.js') return new vm.SourceTextModule(fs.readFileSync(`${root}/frontend/src/services/clinicalFormulary.js`, 'utf8'), { context })
@@ -113,7 +114,7 @@ test('direct Gemini and Edge prompts have identical spatial dosage and quantity 
   const s = await loadService({ fetch: async (_url, options) => { clientPrompt = JSON.parse(options.body).systemInstruction.parts[0].text; return success() } })
   await s.callDirectGeminiVision('data:image/png;base64,aW1hZ2U=')
   const edge = await loadEdge(async (_url, options) => { edgePrompt = JSON.parse(options.body).systemInstruction.parts[0].text; return success() })
-  await edge(new Request('http://localhost', { method: 'POST', body: JSON.stringify({ ocrText: 'Hint' }) }))
+  await edge(edgePost({ ocrText: 'Hint' }))
   const rules = text => text.match(/Dosage extraction rules:[\s\S]*?End dosage extraction rules\./)?.[0]
   assert.ok(rules(clientPrompt))
   assert.equal(rules(clientPrompt), rules(edgePrompt))
@@ -220,11 +221,18 @@ test('Edge success avoids direct calls; empty Edge response falls through', asyn
   assert.equal(calls, 1)
 })
 test('missing remote key plus worker failure yields empty manual-review draft', async () => {
-  const s = await loadService({ env: {} })
+  const s = await loadService({ storedKey: null })
   const result = await s.processPrescriptionPipeline('data:image/png;base64,aW1hZ2U=')
   assert.equal(result.structured.patient.name, '')
   assert.equal(result.structured.medications.length, 0)
   assert.equal(result.structured.overall_confidence, 0)
+})
+test('bundled VITE_GEMINI_API_KEY alone never enables direct browser calls', async () => {
+  let calls = 0
+  const s = await loadService({ storedKey: null, env: { VITE_GEMINI_API_KEY: 'bundled-key' }, fetch: async () => { calls++; return success() } })
+  assert.equal(await s.callDirectGeminiVision('data:image/png;base64,aW1hZ2U='), null)
+  assert.equal((await s.testGeminiConnection()).success, false)
+  assert.equal(calls, 0)
 })
 test('PDF bypasses unsupported Tesseract raster recognition', async () => {
   let ocrCalls = 0
@@ -257,19 +265,41 @@ test('review counts every editable field, additions/removals, and ignores medica
 })
 async function loadEdge(fetch, key = 'test-key') {
   let handler
-  const context = vm.createContext({ fetch, Response, Request, AbortSignal, Deno: { env: { get: () => key } } })
+  const env = { GEMINI_API_KEY: key, SUPABASE_URL: 'https://project.supabase.co', SUPABASE_ANON_KEY: 'anon-key' }
+  // Supabase Auth accepts only the signed-in user's token; the bare anon key has no user.
+  const authFetch = async (url, options) => String(url).endsWith('/auth/v1/user')
+    ? (options.headers.Authorization === 'Bearer user-token' && options.headers.apikey === 'anon-key'
+      ? new Response(JSON.stringify({ id: 'user-1' })) : new Response('{"msg":"invalid JWT"}', { status: 401 }))
+    : fetch(url, options)
+  const context = vm.createContext({ fetch: authFetch, Response, Request, AbortSignal, Deno: { env: { get: name => env[name] } } })
   const source = stripTypeScriptTypes(fs.readFileSync(`${root}/supabase/functions/process-prescription/index.ts`, 'utf8'))
   const mod = new vm.SourceTextModule(source, { context })
   await mod.link(() => new vm.SyntheticModule(['serve'], function () { this.setExport('serve', fn => { handler = fn }) }, { context }))
   await mod.evaluate()
   return handler
 }
+function edgePost(body, token = 'user-token') {
+  return new Request('http://localhost', { method: 'POST', headers: token ? { Authorization: `Bearer ${token}` } : {}, body: JSON.stringify(body) })
+}
+test('Edge requires a signed-in user and rejects oversized images before calling Gemini', async () => {
+  let calls = 0
+  const handler = await loadEdge(async () => { calls++; return success() })
+  for (const token of ['', 'anon-key', 'expired-token']) {
+    const result = await handler(edgePost({ ocrText: 'Hint' }, token))
+    assert.equal(result.status, 401)
+    assert.equal((await result.json()).fallback, true)
+  }
+  assert.equal((await handler(edgePost({ imageBase64: 'a'.repeat(14_000_001) }))).status, 413)
+  assert.equal(calls, 0)
+  assert.equal((await handler(edgePost({ ocrText: 'Hint' }))).status, 200)
+  assert.equal(calls, 1)
+})
 test('Edge endpoint handles CORS, missing keys, schema, MIME, and answer parts', async () => {
   let request
   const handler = await loadEdge(async (url, options) => { request = { url, ...options, body: JSON.parse(options.body) }; return success() })
   assert.equal((await handler(new Request('http://localhost', { method: 'OPTIONS' }))).status, 200)
   assert.equal((await handler(new Request('http://localhost'))).status, 405)
-  const result = await handler(new Request('http://localhost', { method: 'POST', body: JSON.stringify({ imageBase64: 'data:image/png;base64,aW1hZ2U=', ocrText: 'Hint', ocrConfidence: 0 }) }))
+  const result = await handler(edgePost({ imageBase64: 'data:image/png;base64,aW1hZ2U=', ocrText: 'Hint', ocrConfidence: 0 }))
   assert.equal(result.status, 200)
   assert.equal((await result.json()).data.patient.name, fixture.patient.name)
   assert.match(request.url, /gemini-flash-latest:generateContent$/)
@@ -281,14 +311,14 @@ test('Edge endpoint handles CORS, missing keys, schema, MIME, and answer parts',
   await client.callDirectGeminiVision('data:image/png;base64,aW1hZ2U=')
   assert.deepEqual(request.body.generationConfig.responseJsonSchema, clientSchema)
   const missing = await loadEdge(async () => { throw new Error('should not call') }, '')
-  const missingResult = await missing(new Request('http://localhost', { method: 'POST', body: JSON.stringify({ ocrText: 'Hint' }) }))
+  const missingResult = await missing(edgePost({ ocrText: 'Hint' }))
   assert.equal(missingResult.status, 500)
   assert.equal((await missingResult.json()).fallback, true)
 })
 test('Edge rejects empty, blocked, or malformed extractions instead of reporting success', async () => {
   for (const response of ['{}', 'not JSON', JSON.stringify({ candidates: [{ finishReason: 'SAFETY' }] })]) {
     const handler = await loadEdge(async () => new Response(response))
-    const result = await handler(new Request('http://localhost', { method: 'POST', body: JSON.stringify({ ocrText: 'Hint' }) }))
+    const result = await handler(edgePost({ ocrText: 'Hint' }))
     assert.equal(result.status, 502)
     assert.equal((await result.json()).success, false)
   }

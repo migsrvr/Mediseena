@@ -159,8 +159,6 @@ export default function SettingsPage() {
   const [testStatus, setTestStatus] = useState(null)
   const [savedKeySuccess, setSavedKeySuccess] = useState(false)
 
-  const hasEnvKey = Boolean(import.meta.env.VITE_GEMINI_API_KEY && import.meta.env.VITE_GEMINI_API_KEY !== 'your-gemini-api-key')
-
   const handleSaveKey = () => {
     if (geminiKeyInput.trim()) {
       localStorage.setItem('mediseena_gemini_api_key', geminiKeyInput.trim())
@@ -174,7 +172,10 @@ export default function SettingsPage() {
   const handleTestConnection = async () => {
     setIsTestingKey(true)
     setTestStatus(null)
-    const res = await testGeminiConnection(geminiKeyInput)
+    // The production key is an Edge Function secret, so only a browser override can be tested directly.
+    const res = geminiKeyInput.trim()
+      ? await testGeminiConnection(geminiKeyInput)
+      : { success: false, error: 'Prescription extraction runs server-side in the Supabase Edge Function. Enter a browser override key to test a direct Gemini connection.' }
     setIsTestingKey(false)
     setTestStatus(res)
   }
@@ -419,15 +420,13 @@ export default function SettingsPage() {
                         Gemini API Key
                       </h3>
                       <p className="text-[15px] text-black/70 mt-0.5">
-                        Configured for multimodal handwriting recognition & clinical field parsing.
+                        Production extraction uses the key stored in Supabase Edge Function secrets.
                       </p>
                     </div>
-                    {hasEnvKey && (
-                      <span className="inline-flex items-center gap-1.5 rounded-full bg-teal-light/40 border border-teal px-3 py-1 text-xs font-semibold text-teal-deep">
-                        <ShieldCheck className="h-4 w-4" />
-                        Configured in .env
-                      </span>
-                    )}
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-teal-light/40 border border-teal px-3 py-1 text-xs font-semibold text-teal-deep">
+                      <ShieldCheck className="h-4 w-4" />
+                      Server-side
+                    </span>
                   </div>
 
                   <div className="flex flex-col sm:flex-row gap-3">
@@ -439,7 +438,7 @@ export default function SettingsPage() {
                         type="password"
                         value={geminiKeyInput}
                         onChange={(e) => setGeminiKeyInput(e.target.value)}
-                        placeholder={hasEnvKey ? "Using key from .env (enter here to override)" : "Enter Gemini API Key (starts with AIza...)"}
+                        placeholder="Optional browser override key for testing (starts with AIza...)"
                         className="w-full rounded-[10px] border border-gray-300 bg-white py-3 pl-11 pr-4 text-[15px] focus:border-teal-deep focus:outline-none focus:ring-1 focus:ring-teal-deep"
                       />
                     </div>
@@ -460,7 +459,7 @@ export default function SettingsPage() {
                   )}
 
                   <p className="text-xs text-black/60">
-                    A saved override remains in this browser until cleared. The configured key authenticates Google Gemini Vision requests.
+                    A saved override remains in this browser until cleared and is used only when the Edge Function is unavailable.
                   </p>
                 </div>
               </div>

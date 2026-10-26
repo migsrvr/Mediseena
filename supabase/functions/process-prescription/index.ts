@@ -2,7 +2,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
 const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Origin": Deno.env.get("ALLOWED_ORIGIN") || "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
@@ -12,6 +12,28 @@ interface ProcessRequest {
   mimeType?: string;
   ocrText?: string;
   ocrConfidence?: number;
+}
+
+// ~10 MB of decoded image data; larger payloads are rejected before reaching Gemini.
+const MAX_IMAGE_BASE64_LENGTH = 14_000_000;
+
+// The public anon key is a valid JWT, so require a signed-in user to protect the Gemini quota.
+async function isSignedInUser(req: Request): Promise<boolean> {
+  const authorization = req.headers.get("Authorization") || "";
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
+  if (!authorization.startsWith("Bearer ") || !supabaseUrl || !anonKey) return false;
+  try {
+    const res = await fetch(`${supabaseUrl}/auth/v1/user`, {
+      headers: { Authorization: authorization, apikey: anonKey },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return false;
+    const user = await res.json();
+    return Boolean(user?.id);
+  } catch {
+    return false;
+  }
 }
 
 // Keep this text identical to the direct browser extractor; tested for parity.
@@ -47,11 +69,15 @@ serve(async (req: Request) => {
     status, headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
   if (req.method !== "POST") return json({ success: false, error: "Use POST." }, 405);
+  if (!await isSignedInUser(req)) return json({ success: false, fallback: true, error: "Sign in to use AI extraction." }, 401);
 
   try {
     const { imageBase64 = "", mimeType = "image/jpeg", ocrText = "", ocrConfidence = 0 }: ProcessRequest = await req.json();
     if (typeof imageBase64 !== "string" || typeof ocrText !== "string" || (!imageBase64 && !ocrText.trim())) {
       return json({ success: false, error: "A prescription image or OCR text is required." }, 400);
+    }
+    if (imageBase64.length > MAX_IMAGE_BASE64_LENGTH) {
+      return json({ success: false, error: "Prescription image exceeds the 10 MB limit." }, 413);
     }
     const cleanKey = (Deno.env.get("GEMINI_API_KEY") || "").trim().replace(/[\r\n\t]/g, "");
     if (!cleanKey) return json({ success: false, fallback: true, error: "GEMINI_API_KEY is not configured in Edge Function secrets." }, 500);

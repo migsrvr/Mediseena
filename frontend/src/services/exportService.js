@@ -3,7 +3,7 @@
 // Section 3.4.3 & Phase 5: Native JS JSON export & jsPDF medical document export
 // ==============================================================================
 
-import { jsPDF } from 'jspdf'
+// jsPDF (with html2canvas/DOMPurify) is loaded on first PDF export to keep the main bundle small.
 import { formatDate } from '../utils/Formatters.js'
 
 /**
@@ -68,9 +68,10 @@ export function exportToJSON(prescription) {
  * Generates an elegant, clinical-grade Medical Prescription PDF using jsPDF
  * @param {Object} prescription
  */
-export function exportToPDF(prescription) {
+export async function exportToPDF(prescription) {
   if (!prescription) return
 
+  const { jsPDF } = await import('jspdf')
   const doc = new jsPDF({
     orientation: 'portrait',
     unit: 'mm',
